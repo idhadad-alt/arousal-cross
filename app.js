@@ -4,7 +4,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
          getRedirectResult, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, query, where,
-         orderBy, limit, getDocs, serverTimestamp, onSnapshot, deleteField, arrayRemove }
+         orderBy, limit, getDocs, serverTimestamp, onSnapshot, deleteField, arrayRemove, Timestamp }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { getMessaging, getToken, onMessage }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-messaging.js";
@@ -100,7 +100,7 @@ onAuthStateChanged(auth, async (user) => {
 function showGate(signedIn=false) {
   $("#gate").classList.remove("hidden");
   $("#tabs").classList.add("hidden");
-  ["cross","team","history","settings","help"].forEach(v => $("#view-"+v).classList.add("hidden"));
+  ["cross","team","history","settings","help","week"].forEach(v => $("#view-"+v).classList.add("hidden"));
   $("#btn-login").textContent = signedIn ? "כניסה עם חשבון אחר" : "כניסה עם חשבון Google";
   $("#who").textContent = "";
   state.user = null;
@@ -435,6 +435,73 @@ function renderHistory() {
   sec.querySelectorAll(".seg button").forEach(b =>
     b.addEventListener("click", () => { state.histMode = b.dataset.m; renderHistory(); }));
 }
+// ---------- weekly playlist + collage (published Friday 15:00 Asia/Jerusalem, in-app only) ----------
+// Computed on read from the group's reports: deletions propagate automatically, nothing leaves the group.
+function jlOffsetMs(date) {
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jerusalem", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const p = Object.fromEntries(dtf.formatToParts(date).map(x => [x.type, x.value]));
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - date.getTime();
+}
+function jlWallToUtc(y, mo, d, h, mi) {
+  let guess = Date.UTC(y, mo - 1, d, h, mi) - jlOffsetMs(new Date(Date.UTC(y, mo - 1, d, h, mi)));
+  guess = Date.UTC(y, mo - 1, d, h, mi) - jlOffsetMs(new Date(guess));
+  return new Date(guess);
+}
+// most recent Friday 15:00 Jerusalem at or before fromDate
+function lastFridayCutoff(fromDate) {
+  const wall = new Date(fromDate.getTime() + jlOffsetMs(fromDate));
+  const daysBack = (wall.getUTCDay() - 5 + 7) % 7;
+  let cand = new Date(Date.UTC(wall.getUTCFullYear(), wall.getUTCMonth(), wall.getUTCDate() - daysBack, 15, 0));
+  if (cand.getTime() > wall.getTime()) cand = new Date(cand.getTime() - 7 * 864e5);
+  return jlWallToUtc(cand.getUTCFullYear(), cand.getUTCMonth() + 1, cand.getUTCDate(), 15, 0);
+}
+function fmtD(d) {
+  return d.toLocaleDateString("he-IL", { timeZone: "Asia/Jerusalem", day: "numeric", month: "numeric" });
+}
+
+async function renderWeekly() {
+  const sec = $("#view-week");
+  if (state.weekOffset === undefined) state.weekOffset = 0;
+  const latestEnd = lastFridayCutoff(new Date());
+  const end = new Date(latestEnd.getTime() - state.weekOffset * 7 * 864e5);
+  const start = new Date(end.getTime() - 7 * 864e5);
+  sec.innerHTML = `<h3 style="margin:6px 0">הפלייליסט והקולאז' השבועיים</h3>
+    <p class="muted" style="text-align:center">שבוע ${fmtD(start)} - ${fmtD(end)} (פורסם ביום שישי 15:00)</p>
+    <div id="wk-body"><div class="muted" style="text-align:center">טוען...</div></div>
+    <div style="display:flex;gap:10px;margin-top:14px;justify-content:center">
+      <button class="ghost" id="wk-prev">שבוע קודם</button>
+      <button class="ghost" id="wk-next" ${state.weekOffset === 0 ? "disabled" : ""}>שבוע מאוחר יותר</button>
+    </div>`;
+  sec.querySelector("#wk-prev").addEventListener("click", () => { state.weekOffset++; renderWeekly(); });
+  sec.querySelector("#wk-next").addEventListener("click", () => { if (state.weekOffset > 0) { state.weekOffset--; renderWeekly(); } });
+  const body = sec.querySelector("#wk-body");
+  let docs;
+  try {
+    const qy = query(collG(state.group, "reports"),
+      where("at", ">=", Timestamp.fromDate(start)),
+      where("at", "<", Timestamp.fromDate(end)),
+      orderBy("at", "asc"));
+    docs = (await getDocs(qy)).docs;
+  } catch (e) { body.innerHTML = `<div class="muted" style="text-align:center">הטעינה נכשלה: ${e.code || e}</div>`; return; }
+  const nameOf = uid => { const m = state.members.find(m => m.id === uid); return m ? m.name : ""; };
+  const songs = docs.filter(d => d.data().songUrl);
+  const photos = docs.filter(d => d.data().photo);
+  let html = `<h4 style="margin:10px 0 4px">השירים שהמשתתפים בחרו (${songs.length})</h4>`;
+  html += songs.length ? songs.map(d => {
+    const r = d.data();
+    return `<div class="item"><span>${nameOf(r.uid)}${r.word ? " · " + r.word : ""}</span>
+      <a class="ghost" style="text-decoration:none;padding:6px 10px" href="${r.songUrl}" target="_blank" rel="noopener">פתיחה בספוטיפיי</a></div>`;
+  }).join("") : `<div class="muted">לא נבחרו שירים בשבוע הזה.</div>`;
+  html += `<h4 style="margin:16px 0 4px">קולאז' התמונות (${photos.length})</h4>`;
+  html += photos.length
+    ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px">` +
+      photos.map(d => `<img src="${d.data().photo}" alt="תמונה מהשבוע" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px">`).join("") + `</div>`
+    : `<div class="muted">לא הועלו תמונות בשבוע הזה.</div>`;
+  html += `<p class="muted" style="margin-top:14px;font-size:.8rem">השבוע שבצבירה יפורסם כאן ביום שישי ב-15:00. מחיקת דיווח או תמונה מסירה אותם גם מהפלייליסט והקולאז'.</p>`;
+  body.innerHTML = html;
+}
+
 // ---------- settings + reminders (opt-in) ----------
 function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
 function isStandalone() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
@@ -1022,7 +1089,7 @@ async function switchGroup(gid) {
 
 function showView(v) {
   state.view = v;
-  ["cross","team","history","settings","help"].forEach(k => {
+  ["cross","team","history","week","settings","help"].forEach(k => {
     $("#view-" + k).classList.toggle("hidden", k !== v);
   });
   document.querySelectorAll("nav.tabs button").forEach(b =>
@@ -1035,6 +1102,7 @@ function refreshView() {
   if (state.view === "cross") renderCross();
   else if (state.view === "team") renderTeam();
   else if (state.view === "history") renderHistory();
+  else if (state.view === "week") renderWeekly();
   else if (state.view === "settings") renderSettings();
   else if (state.view === "help") renderHelp();
 }
