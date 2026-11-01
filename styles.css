@@ -52,7 +52,7 @@ button.ghost { background: none; border: 1px solid var(--line); color: var(--ink
   animation: breatheLR 9s ease-in-out infinite alternate; }
 @keyframes breatheLR { to { transform: scale(1.06); opacity: .75; } }
 .quad .qlabel { position: absolute; bottom: 8px; right: 10px; font-size: .95rem; font-weight: 700;
-  color: rgba(232,228,218,.85); text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+  color: rgba(232,228,218,.85); text-shadow: 0 1px 3px rgba(0,0,0,.6); z-index: 2; }
 .qUL .qlabel, .qUR .qlabel { bottom: auto; top: 8px; }
 .qUL .qlabel, .qLL .qlabel { right: auto; left: 10px; } /* outer edge, avoids axis pill overlap */
 /* axes + points */
