@@ -49,6 +49,7 @@ async function saveReminders(patch) {
   state.profile.reminders = Object.assign({}, state.profile.reminders, patch);
 }
 
+let pendingAdminMsg = "";
 const HEB_DAYS = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
 const QUADS = {
   UL: { title: "סוערת",   vocab: "חרדה · זעם · לחימה · בריחה · מתח גבוה" },
@@ -80,10 +81,32 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) { showGate(); return; }
   const urlG = new URLSearchParams(location.search).get("g");
   if (urlG) sessionStorage.setItem("pendingGroup", urlG);
-  const targetG = urlG || sessionStorage.getItem("pendingGroup") ||
+  let targetG = urlG || sessionStorage.getItem("pendingGroup") ||
     localStorage.getItem("currentGroup") || LEGACY_GID;
-  const name = await checkRoster(user, targetG).catch(() => null);
+  let name = await checkRoster(user, targetG).catch(() => null);
+  if (name === null && !urlG) {
+    // the saved group may have been deleted - fall back to another group they belong to
+    let prof = null;
+    try { const ps = await getDoc(doc(db, "members", user.uid)); prof = ps.exists() ? ps.data() : null; } catch (e) {}
+    const alts = (prof && Array.isArray(prof.groups) ? prof.groups : []).filter(g => g && g !== targetG);
+    for (const g of alts) {
+      const n2 = await checkRoster(user, g).catch(() => null);
+      if (n2 !== null) { name = n2; targetG = g; break; }
+    }
+  }
   if (name === null) {
+    // an approved facilitator with no roster membership yet lands in a settings-only
+    // home, so they can create their first group
+    let fac = false;
+    try { fac = (await getDoc(doc(db, "admins", (user.email || "").toLowerCase()))).exists(); } catch (e) {}
+    if (fac && (user.email || "").toLowerCase() !== OWNER_EMAIL) {
+      state.user = user; state.name = user.displayName || user.email;
+      state.group = null; state.isAdmin = true; state.groups = []; state.groupNames = {};
+      localStorage.removeItem("currentGroup");
+      sessionStorage.removeItem("pendingGroup");
+      enterFacilitatorHome();
+      return;
+    }
     const msg = $("#gate-msg");
     msg.textContent = "הכתובת " + user.email + " לא נמצאת ברשימת הקבוצה הזו. פנה למנהל הקבוצה.";
     sessionStorage.removeItem("pendingGroup");
@@ -97,6 +120,14 @@ onAuthStateChanged(auth, async (user) => {
   enterApp();
 });
 
+function enterFacilitatorHome() {
+  $("#gate").classList.add("hidden");
+  $("#tabs").classList.remove("hidden");
+  $("#who").textContent = state.name;
+  document.querySelectorAll("nav.tabs button").forEach(b =>
+    b.classList.toggle("hidden", b.dataset.v !== "settings"));
+  showView("settings");
+}
 function showGate(signedIn=false) {
   $("#gate").classList.remove("hidden");
   $("#tabs").classList.add("hidden");
@@ -519,6 +550,7 @@ function memberStatus(email) {
 
 async function renderAdminList(sec) {
   const box = sec.querySelector("#admin-list");
+  if (!box) return;
   try {
     const snap = await getDocs(collG(state.group, "roster"));
     if (!snap.size) { box.innerHTML = `<div class="muted">הרשימה ריקה.</div>`; return; }
@@ -581,6 +613,7 @@ function fmtDateIL(d) { return d.toDateString(); }
 
 async function renderSuper(sec) {
   const box = sec.querySelector("#super-groups");
+  if (!box) return;
   box.innerHTML = `<div class="muted">טוען...</div>`;
   try {
     const snap = await getDocs(collection(db, "groups"));
@@ -761,9 +794,8 @@ function wireFacilitator(sec) {
       await loadGroupNames(); renderGroupSwitcher();
       const link = joinLink(ref.id);
       await switchGroup(ref.id);
+      pendingAdminMsg = "הקבוצה נוצרה וזה ממשק הניהול שלה. קישור הצטרפות: " + link;
       showView("settings");
-      const amsg = document.querySelector("#a-msg");
-      if (amsg) amsg.textContent = "הקבוצה נוצרה וזה ממשק הניהול שלה. קישור הצטרפות: " + link;
     } catch (e) { msg.textContent = "יצירת הקבוצה נכשלה: " + (e.code || e); }
     btn.disabled = false;
   });
@@ -802,6 +834,17 @@ function renderSettings() {
   const on = !!rem.enabled;
   const times = (rem.times && rem.times.length ? rem.times : DEFAULT_TIMES);
   const tstyle = "padding:8px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);width:96px";
+  // locale-proof 24h pickers: <input type=time> renders 12h with AM/PM in some browser
+  // locales and clips/confuses; hour/minute selects always show 00-23 unambiguously.
+  // The saved value stays the same "HH:MM" 24h string as before.
+  const topts = (n, cur) => `<option value=""></option>` +
+    Array.from({ length: n }, (_, i) => String(i).padStart(2, "0"))
+      .map(v => `<option value="${v}"${v === cur ? " selected" : ""}>${v}</option>`).join("");
+  const timeSel = (id, val) => {
+    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(val || "");
+    return `<span style="display:inline-flex;direction:ltr;align-items:center;gap:2px">
+      <select id="${id}-h" style="${tstyle};width:56px">${topts(24, m ? m[1] : "")}</select><span>:</span><select id="${id}-m" style="${tstyle};width:56px">${topts(60, m ? m[2] : "")}</select></span>`;
+  };
   let iosNote = "";
   if (isIOS() && !isStandalone())
     iosNote = `<p class="muted">באייפון: כדי לקבל תזכורות צריך קודם להוסיף את האתר למסך הבית
@@ -813,10 +856,10 @@ function renderSettings() {
       (בשלב זה התזכורות עדיין לא נשלחות בפועל)</p>
     ${iosNote}
     <div class="muted" style="font-size:.82rem;margin:8px 0 2px">שעות קבלת התזכורות</div>
-    <div style="display:flex;gap:8px;direction:ltr;justify-content:center;margin:6px 0 10px">
-      <input type="time" id="rt0" value="${times[0] || ""}" style="${tstyle}">
-      <input type="time" id="rt1" value="${times[1] || ""}" style="${tstyle}">
-      <input type="time" id="rt2" value="${times[2] || ""}" style="${tstyle}">
+    <div style="display:flex;gap:6px;direction:ltr;justify-content:center;margin:6px 0 10px;flex-wrap:wrap">
+      ${timeSel("rt0", times[0])}
+      ${timeSel("rt1", times[1])}
+      ${timeSel("rt2", times[2])}
     </div>
     <div style="display:flex;gap:10px">
       <button class="${on ? "ghost" : "primary"}" id="btn-rem" style="flex:1">${on ? "כיבוי התזכורות" : "הפעלת תזכורות"}</button>
@@ -837,7 +880,10 @@ function renderSettings() {
   });
   sec.querySelector("#btn-times").addEventListener("click", async () => {
     const msg = $("#rem-msg");
-    const vals = [0, 1, 2].map(i => sec.querySelector("#rt" + i).value).filter(v => /^\d{2}:\d{2}$/.test(v));
+    const vals = [0, 1, 2].map(i => {
+      const h = sec.querySelector("#rt" + i + "-h").value, m = sec.querySelector("#rt" + i + "-m").value;
+      return (h && m) ? h + ":" + m : "";
+    }).filter(Boolean);
     if (!vals.length) { msg.textContent = "צריך לפחות שעה אחת תקינה."; return; }
     try { await saveReminders({ times: vals }); msg.textContent = "השעות נשמרו: " + vals.join(", "); }
     catch (e) { msg.textContent = "שמירת השעות נכשלה: " + (e.code || e); }
@@ -845,13 +891,17 @@ function renderSettings() {
   sec.querySelector("#btn-out").addEventListener("click", () => signOut(auth));
 }
 
+let adminSlotSeq = 0;
 async function fillAdminSlot(sec) {
   const slot = sec.querySelector("#admin-slot");
   if (!slot) return;
+  // renders can overlap (snapshot callbacks); only the newest one may touch the DOM
+  const seq = ++adminSlotSeq;
   let gdoc = null;
-  if (state.group !== LEGACY_GID) {
+  if (state.group && state.group !== LEGACY_GID) {
     try { const s = await getDoc(doc(db, "groups", state.group)); gdoc = s.exists() ? s.data() : null; } catch (e) {}
   }
+  if (seq !== adminSlotSeq) return;
   const email = (state.user.email || "").toLowerCase();
   const groupAdmin = isSuper() || (gdoc && Array.isArray(gdoc.adminEmails) && gdoc.adminEmails.includes(email));
   const roleLine = sec.querySelector("#role-line");
@@ -929,6 +979,10 @@ async function fillAdminSlot(sec) {
     <p class="muted" id="f-msg"></p>`;
   }
   slot.innerHTML = html;
+  if (pendingAdminMsg) {
+    const target = slot.querySelector("#a-msg") || slot.querySelector("#f-msg");
+    if (target) target.textContent = pendingAdminMsg;
+  }
   if (slot.querySelector("#a-add")) wireAdmin(sec);
   if (slot.querySelector("#g-create")) wireSuper(sec);
   if (slot.querySelector("#f-create")) wireFacilitator(sec);
@@ -1008,6 +1062,7 @@ let unsubMembers = null, unsubReports = null;
 async function enterApp() {
   $("#gate").classList.add("hidden");
   $("#tabs").classList.remove("hidden");
+  document.querySelectorAll("nav.tabs button").forEach(b => b.classList.remove("hidden"));
   $("#who").textContent = state.name;
   if (unsubMembers) unsubMembers();
   unsubMembers = onSnapshot(collG(state.group, "members"), (snap) => {
@@ -1104,10 +1159,11 @@ async function switchGroup(gid) {
   state.draft = null; closeOverlay();
   const name = await checkRoster(state.user, gid).catch(() => null);
   if (name) state.name = name;
-  enterApp();
+  await enterApp();
 }
 
 function showView(v) {
+  if (v !== "settings") pendingAdminMsg = "";
   state.view = v;
   ["cross","team","history","week","settings","help"].forEach(k => {
     $("#view-" + k).classList.toggle("hidden", k !== v);
