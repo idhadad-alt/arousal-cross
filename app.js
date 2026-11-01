@@ -342,9 +342,14 @@ async function renderAdminList(sec) {
           const del = document.createElement("button");
           del.className = "ghost"; del.textContent = "הסרה";
           del.addEventListener("click", async () => {
-            if (!confirm("להסיר את " + email + " מרשימת הצוות?")) return;
-            await deleteDoc(doc(db, "roster", email));
-            renderAdminList(sec);
+            if (del.dataset.armed) {
+              del.disabled = true;
+              try { await deleteDoc(doc(db, "roster", email)); } catch (e) {}
+              renderAdminList(sec);
+            } else {
+              del.dataset.armed = "1"; del.textContent = "אישור הסרה";
+              setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.textContent = "הסרה"; } }, 4000);
+            }
           });
           item.appendChild(del);
         }
