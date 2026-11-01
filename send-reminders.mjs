@@ -94,6 +94,16 @@ async function main() {
     if (!due.length) { skipped++; continue; }
     let memberSent = 0;
     for (const d of due) {
+      // Atomic idempotency: claim the slot with a create-only doc BEFORE sending.
+      // currentDocument.exists=false makes Firestore fail the write if any other
+      // run already claimed this member+slot, so overlapping runs cannot both send.
+      const claimId = encodeURIComponent(`${m.path.split('/').pop()}_${d.slotId}`);
+      const claim = await fetch(`${base}/reminderClaims/${claimId}?currentDocument.exists=false`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { at: FV.s(new Date().toISOString()) } })
+      });
+      if (!claim.ok) { console.log('slot already claimed, skipping'); continue; }
       for (const t of m.tokens) {
         const msg = {
           message: {
@@ -114,8 +124,8 @@ async function main() {
         else console.log('send failed for one token:', r.status);
       }
     }
-    // Idempotency: record every due slot (even if a token failed) so a retry
-    // within the window never double-sends; keep the last 12 slots.
+    // Record claimed slots on the member doc too (informational; the
+    // reminderClaims docs above are the authoritative atomic guard).
     const lastSlots = [...m.lastSlots, ...due.map(d => d.slotId)].slice(-12);
     await fetch(`${base}/members/${m.path.split('/').pop()}?updateMask.fieldPaths=reminders`, {
       method: 'PATCH',
