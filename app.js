@@ -71,13 +71,8 @@ async function checkRoster(user, gid) {
 $("#btn-login").addEventListener("click", async () => {
   const msg = $("#gate-msg"); msg.classList.add("hidden");
   try {
-    await signInWithPopup(auth, new GoogleAuthProvider());
-  } catch (e) {
-    if (["auth/popup-blocked","auth/popup-closed-by-user","auth/cancelled-popup-request",
-         "auth/operation-not-supported-in-this-environment"].includes(e.code)) {
-      await signInWithRedirect(auth, new GoogleAuthProvider());
-    } else { msg.textContent = "שגיאת כניסה: " + e.code; msg.classList.remove("hidden"); }
-  }
+    await signInWithRedirect(auth, new GoogleAuthProvider());
+  } catch (e) { msg.textContent = "שגיאת כניסה: " + e.code; msg.classList.remove("hidden"); }
 });
 getRedirectResult(auth).catch(() => {});
 
