@@ -1,0 +1,35 @@
+name: report-reminders
+on:
+  schedule:
+    - cron: '50 7,12,19 * * *'
+      timezone: 'Asia/Jerusalem'
+  workflow_dispatch:
+    inputs:
+      test_slot:
+        description: 'optional slot override, e.g. 2026-11-01@0800'
+        required: false
+permissions:
+  contents: write
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: send reminders
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT_ID: 'arousal-cross-hamani'
+          SITE_URL: 'https://idhadad-alt.github.io/arousal-cross/'
+          TEST_SLOT: ${{ inputs.test_slot }}
+        run: node send-reminders.mjs
+      - name: keep-alive stamp
+        run: |
+          git config user.name 'reminder-bot'
+          git config user.email 'actions@github.com'
+          date -u +%FT%TZ > .last-run
+          git add .last-run
+          git commit -m 'keep-alive: reminder run' || echo 'no changes'
+          git push

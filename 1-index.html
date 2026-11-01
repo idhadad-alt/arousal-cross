@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>צלב העוררות - צוות חמני</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#14171c">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>צלב העוררות</h1>
+  <div class="who" id="who"></div>
+</header>
+<main id="main">
+  <div class="center-screen" id="gate">
+    <p>האתר סגור לחברי צוות חמני הרשומים.</p>
+    <p class="muted">הכניסה אישית ומרצון - כל אחד נכנס בעצמו ומאשר.</p>
+    <button class="primary" id="btn-login">כניסה עם חשבון Google</button>
+    <p class="muted hidden" id="gate-msg"></p>
+  </div>
+  <section id="view-cross" class="hidden"></section>
+  <section id="view-team" class="hidden"></section>
+  <section id="view-history" class="hidden"></section>
+  <section id="view-settings" class="hidden"></section>
+</main>
+<nav class="tabs hidden" id="tabs">
+  <button data-v="cross" class="active">הצלב</button>
+  <button data-v="team">הצוות</button>
+  <button data-v="history">היסטוריה</button>
+  <button data-v="settings">הגדרות</button>
+</nav>
+<div id="overlay"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
