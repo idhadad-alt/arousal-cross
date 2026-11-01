@@ -415,7 +415,8 @@ function renderSettings() {
     <p class="muted">בחירה אישית - אפשר לכבות בכל רגע ולהתאים את השעות. ברירת מחדל: 07:50, 12:50, 19:50.
       (בשלב זה התזכורות עדיין לא נשלחות בפועל)</p>
     ${iosNote}
-    <div style="display:flex;gap:8px;direction:ltr;justify-content:center;margin:10px 0">
+    <div class="muted" style="font-size:.82rem;margin:8px 0 2px">שעות קבלת התזכורות</div>
+    <div style="display:flex;gap:8px;direction:ltr;justify-content:center;margin:6px 0 10px">
       <input type="time" id="rt0" value="${times[0] || ""}" style="${tstyle}">
       <input type="time" id="rt1" value="${times[1] || ""}" style="${tstyle}">
       <input type="time" id="rt2" value="${times[2] || ""}" style="${tstyle}">
@@ -482,7 +483,7 @@ function showReminderPrompt() {
     <h3 style="margin:2px 0 8px">תזכורות לדיווח?</h3>
     <p>אפשר לקבל תזכורת עד שלוש פעמים ביום - ברירת המחדל 07:50, 12:50, 19:50.
       אפשר לכבות בכל רגע או להתאים את השעות אישית בהגדרות.</p>
-    <p class="muted">נרשמים ונכנסים עם גוגל רק פעם אחת - מכאן והלאה הכניסה ישירה לצלב.</p>
+    <p class="muted">באותו דפדפן הכניסה נשמרת - מכאן והלאה נכנסים ישר לצלב. אחרי יציאה מהחשבון, ניקוי נתוני גלישה או מעבר למכשיר חדש נכנסים שוב עם גוגל.</p>
     <div class="row" style="display:flex;gap:10px;margin-top:12px">
       <button class="primary" id="rem-yes" style="flex:1">הפעלת תזכורות</button>
       <button class="ghost" id="rem-no" style="flex:1">לא עכשיו</button>
@@ -594,7 +595,7 @@ function helpHTML(firstTime) {
       <h3>פרטיות ובחירה</h3>
       <p>הכניסה אישית ומרצון, לחברי הצוות הרשומים בלבד. המילה, השיר והתמונה אופציונליים תמיד.
         מה שאתה משתף גלוי לחברי הצוות בלבד.</p>
-      <p>נרשמים ונכנסים עם גוגל רק פעם אחת - מכאן והלאה הכניסה ישירה לצלב.</p>
+      <p>באותו דפדפן הכניסה נשמרת - מכאן והלאה נכנסים ישר לצלב. אחרי יציאה מהחשבון, ניקוי נתוני גלישה או מעבר למכשיר חדש נכנסים שוב עם גוגל.</p>
     </div>
     ${firstTime ? `<div style="text-align:center;margin:18px 0 8px">
       <button class="primary" id="btn-start">מתחילים</button></div>` : ``}
