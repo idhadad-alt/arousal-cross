@@ -4,7 +4,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
          getRedirectResult, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, query, where,
-         orderBy, limit, getDocs, serverTimestamp, onSnapshot, deleteField }
+         orderBy, limit, getDocs, serverTimestamp, onSnapshot, deleteField, arrayRemove }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { getMessaging, getToken, onMessage }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-messaging.js";
@@ -251,15 +251,15 @@ async function saveReport() {
     if (word) rec.word = word;
     if (song) rec.songUrl = song;
     if (pf) rec.photo = await compressPhoto(pf);
-    await addDoc(collG(state.group, "reports"), rec);
+    const repRef = await addDoc(collG(state.group, "reports"), rec);
     const add = {};
     if (rec.word) add.word = rec.word;
     if (rec.songUrl) add.songUrl = rec.songUrl;
     if (rec.photo) add.photo = rec.photo;
     await setDoc(docG(state.group, "members", state.user.uid), {
       name: state.name, email: state.user.email,
-      lastPoint: { x: rec.x, y: rec.y, at: new Date().toISOString() },
-      additions: add
+      lastPoint: { x: rec.x, y: rec.y, at: new Date().toISOString(), rid: repRef.id },
+      additions: add, lastReportId: repRef.id
     }, { merge: true });
     state.draft = null; closeOverlay();
   } catch (e) {
@@ -350,8 +350,12 @@ function renderHistory() {
             await updateDoc(docG(state.group, "reports", r.id), { photo: deleteField() });
             const mref = docG(state.group, "members", state.user.uid);
             const ms = await getDoc(mref);
-            if (ms.exists() && ms.data().additions && ms.data().additions.photo === r.photo)
-              await updateDoc(mref, { "additions.photo": deleteField() });
+            if (ms.exists()) {
+              const m = ms.data();
+              const isLatest = m.lastReportId ? m.lastReportId === r.id : true;
+              if (isLatest && m.additions && m.additions.photo === r.photo)
+                await updateDoc(mref, { "additions.photo": deleteField() });
+            }
             r.photo = null; renderHistory();
           } catch (e) { pr.disabled = false; }
         });
@@ -367,11 +371,17 @@ function renderHistory() {
           const ms = await getDoc(mref);
           if (ms.exists()) {
             const m = ms.data(); const patch = {};
-            if (m.lastPoint && m.lastPoint.x === r.x && m.lastPoint.y === r.y) patch.lastPoint = deleteField();
-            if (m.additions) {
-              if (r.photo && m.additions.photo === r.photo) patch["additions.photo"] = deleteField();
-              if (r.word && m.additions.word === r.word) patch["additions.word"] = deleteField();
-              if (r.songUrl && m.additions.songUrl === r.songUrl) patch["additions.songUrl"] = deleteField();
+            // identity match on the report id; legacy docs (no lastReportId/rid) fall back to coordinates
+            const isLatest = m.lastReportId ? m.lastReportId === r.id
+              : (m.lastPoint && m.lastPoint.rid ? m.lastPoint.rid === r.id
+              : (m.lastPoint && m.lastPoint.x === r.x && m.lastPoint.y === r.y));
+            if (isLatest) {
+              if (m.lastPoint) patch.lastPoint = deleteField();
+              if (m.additions) {
+                if (r.photo && m.additions.photo === r.photo) patch["additions.photo"] = deleteField();
+                if (r.word && m.additions.word === r.word) patch["additions.word"] = deleteField();
+                if (r.songUrl && m.additions.songUrl === r.songUrl) patch["additions.songUrl"] = deleteField();
+              }
             }
             if (Object.keys(patch).length) await updateDoc(mref, patch);
           }
@@ -592,10 +602,19 @@ async function renderAdmins(sec) {
       item.innerHTML = `<span>${d.id}</span>`;
       const del = document.createElement("button"); del.className = "ghost"; del.textContent = "הסרת הרשאה";
       del.addEventListener("click", async () => {
-        if (!del.dataset.armed) { del.dataset.armed = "1"; del.textContent = "בטוח? לחץ שוב"; setTimeout(() => { del.dataset.armed = ""; del.textContent = "הסרת הרשאה"; }, 4000); return; }
+        if (!del.dataset.armed) { del.dataset.armed = "1"; del.textContent = "בטוח? יבוטל גם ניהול קבוצות"; setTimeout(() => { del.dataset.armed = ""; del.textContent = "הסרת הרשאה"; }, 4000); return; }
         del.disabled = true;
-        try { await deleteDoc(doc(db, "admins", d.id)); } catch (e) {}
-        renderAdmins(sec);
+        const email = d.id;
+        try {
+          await deleteDoc(doc(db, "admins", email));
+          const gs = await getDocs(collection(db, "groups"));
+          for (const g of gs.docs) {
+            const ae = g.data().adminEmails || [];
+            if (ae.includes(email))
+              await updateDoc(doc(db, "groups", g.id), { adminEmails: arrayRemove(email) }).catch(() => {});
+          }
+        } catch (e) {}
+        renderAdmins(sec); renderSuper(sec);
       });
       item.appendChild(del); box.appendChild(item);
     });
@@ -741,7 +760,7 @@ async function fillAdminSlot(sec) {
     html += `
     <hr style="border-color:var(--line);margin:22px 0">
     <h3 style="margin:8px 0">מנחים מורשים (אדמינים)</h3>
-    <p class="muted">מנחה שתאשר כאן יוכל לפתוח ולנהל קבוצות משלו. אפשר להסיר את ההרשאה בכל רגע.</p>
+    <p class="muted">מנחה שתאשר כאן יוכל לפתוח ולנהל קבוצות משלו. אפשר להסיר את ההרשאה בכל רגע - ההסרה מבטלת מיד גם פתיחת קבוצות חדשות וגם את ניהול הקבוצות שכבר פתח. הקבוצות והמשתתפים נשארים.</p>
     <div class="list" id="admins-list"><div class="muted">טוען...</div></div>
     <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">כתובת ה-Gmail של המנחה</label>
     <input type="text" id="adm-email" dir="ltr" placeholder="name@gmail.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
