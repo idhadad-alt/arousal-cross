@@ -23,6 +23,8 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 let messaging = null;
 
+const LEGACY_GID = "hamani";
+const LEGACY_NAME = "צוות חמני";
 const $ = (s) => document.querySelector(s);
 const state = { user: null, name: "", members: [], myReports: [], view: "cross",
   histMode: "today", showAvg: false, draft: null, welcomed: true,
@@ -55,8 +57,6 @@ const QUADS = {
   LR: { title: "מנוחה והחלמה",  vocab: "נינוחות · שלווה · מנוחה · הרפיה · החלמה" }
 };
 const OWNER_EMAIL = "idhadad@gmail.com";
-const LEGACY_GID = "hamani";
-const LEGACY_NAME = "צוות חמני";
 function collG(gid, name) { return gid === LEGACY_GID ? collection(db, name) : collection(db, "groups", gid, name); }
 function docG(gid, name, id) { return gid === LEGACY_GID ? doc(db, name, id) : doc(db, "groups", gid, name, id); }
 function joinLink(gid) {
