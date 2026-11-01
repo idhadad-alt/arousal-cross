@@ -274,7 +274,7 @@ function fmtTime(d) {
 
 function renderTeam() {
   const sec = $("#view-team");
-  sec.innerHTML = (state.groupPhoto ? `<img src="${state.groupPhoto}" alt="תמונת קבוצה" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;margin-bottom:8px">` : "")
+  sec.innerHTML = (state.groupPhoto ? `<img src="${state.groupPhoto}" alt="תמונת קבוצה" style="width:100%;height:auto;max-height:340px;object-fit:contain;border-radius:12px;margin-bottom:8px">` : "")
     + `<div class="seg"><button id="btn-avg">${state.showAvg ? "הסתר ממוצע צוותי" : "ממוצע צוותי"}</button></div>` + crossHTML();
   const wrap = sec.querySelector("#cw");
   wireQuadVocab(wrap);
@@ -637,7 +637,7 @@ function wireGroupPhoto(sec) {
   if (!btn) return;
   const showCur = () => {
     cur.innerHTML = state.groupPhoto
-      ? `<img src="${state.groupPhoto}" alt="תמונת קבוצה" style="width:100%;max-height:140px;object-fit:cover;border-radius:10px;margin:6px 0">`
+      ? `<img src="${state.groupPhoto}" alt="תמונת קבוצה" style="width:100%;height:auto;max-height:220px;object-fit:contain;border-radius:10px;margin:6px 0">`
       : `<div class="muted">אין תמונת קבוצה עדיין.</div>`;
   };
   showCur();
