@@ -25,7 +25,8 @@ let messaging = null;
 
 const $ = (s) => document.querySelector(s);
 const state = { user: null, name: "", members: [], myReports: [], view: "cross",
-  histMode: "today", showAvg: false, draft: null, welcomed: true };
+  histMode: "today", showAvg: false, draft: null, welcomed: true,
+  group: LEGACY_GID, groups: [], groupNames: {}, profile: {}, allGroups: [] };
 
 const DEFAULT_TIMES = ["07:50", "12:50", "19:50"];
 const QA_REM = new URLSearchParams(location.search).has("qarem");
@@ -34,7 +35,7 @@ const qaRem = {
   merge(patch) { const v = Object.assign({}, qaRem.get(), patch); localStorage.setItem("qaReminders", JSON.stringify(v)); }
 };
 function myMember() { return state.members.find(x => x.id === state.user.uid) || {}; }
-function myReminders() { if (QA_REM) return qaRem.get(); return myMember().reminders || {}; }
+function myReminders() { if (QA_REM) return qaRem.get(); return state.profile.reminders || {}; }
 async function saveReminders(patch) {
   if (QA_REM) { qaRem.merge(patch); return; }
   const ref = doc(db, "members", state.user.uid);
@@ -42,6 +43,8 @@ async function saveReminders(patch) {
   for (const k of Object.keys(patch)) flat["reminders." + k] = patch[k];
   try { await updateDoc(ref, flat); }
   catch (e) { await setDoc(ref, flat, { mergeFields: Object.keys(flat) }); }
+  state.profile = Object.assign({}, state.profile);
+  state.profile.reminders = Object.assign({}, state.profile.reminders, patch);
 }
 
 const HEB_DAYS = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
@@ -52,9 +55,16 @@ const QUADS = {
   LR: { title: "מנוחה והחלמה",  vocab: "נינוחות · שלווה · מנוחה · הרפיה · החלמה" }
 };
 const OWNER_EMAIL = "idhadad@gmail.com";
+const LEGACY_GID = "hamani";
+const LEGACY_NAME = "צוות חמני";
+function collG(gid, name) { return gid === LEGACY_GID ? collection(db, name) : collection(db, "groups", gid, name); }
+function docG(gid, name, id) { return gid === LEGACY_GID ? doc(db, name, id) : doc(db, "groups", gid, name, id); }
+function joinLink(gid) {
+  return "https://idhadad-alt.github.io/arousal-cross/" + (gid === LEGACY_GID ? "" : "?g=" + gid);
+}
 // ---------- auth + roster gate ----------
-async function checkRoster(user) {
-  const snap = await getDoc(doc(db, "roster", user.email));
+async function checkRoster(user, gid) {
+  const snap = await getDoc(docG(gid, "roster", user.email));
   return snap.exists() ? (snap.data().name || user.displayName || user.email) : null;
 }
 
@@ -73,15 +83,22 @@ getRedirectResult(auth).catch(() => {});
 
 onAuthStateChanged(auth, async (user) => {
   if (!user) { showGate(); return; }
-  const name = await checkRoster(user).catch(() => null);
+  const urlG = new URLSearchParams(location.search).get("g");
+  if (urlG) sessionStorage.setItem("pendingGroup", urlG);
+  const targetG = urlG || sessionStorage.getItem("pendingGroup") ||
+    localStorage.getItem("currentGroup") || LEGACY_GID;
+  const name = await checkRoster(user, targetG).catch(() => null);
   if (name === null) {
     const msg = $("#gate-msg");
-    msg.textContent = "הכתובת " + user.email + " לא נמצאת ברשימת הצוות. פנה לאלעד.";
+    msg.textContent = "הכתובת " + user.email + " לא נמצאת ברשימת הקבוצה הזו. פנה למנהל הקבוצה.";
+    sessionStorage.removeItem("pendingGroup");
     msg.classList.remove("hidden");
     showGate(true);
     return;
   }
-  state.user = user; state.name = name;
+  state.user = user; state.name = name; state.group = targetG;
+  localStorage.setItem("currentGroup", targetG);
+  sessionStorage.removeItem("pendingGroup");
   enterApp();
 });
 
@@ -239,12 +256,12 @@ async function saveReport() {
     if (word) rec.word = word;
     if (song) rec.songUrl = song;
     if (pf) rec.photo = await compressPhoto(pf);
-    await addDoc(collection(db, "reports"), rec);
+    await addDoc(collG(state.group, "reports"), rec);
     const add = {};
     if (rec.word) add.word = rec.word;
     if (rec.songUrl) add.songUrl = rec.songUrl;
     if (rec.photo) add.photo = rec.photo;
-    await setDoc(doc(db, "members", state.user.uid), {
+    await setDoc(docG(state.group, "members", state.user.uid), {
       name: state.name, email: state.user.email,
       lastPoint: { x: rec.x, y: rec.y, at: new Date().toISOString() },
       additions: add
@@ -334,17 +351,21 @@ function renderHistory() {
 function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
 function isStandalone() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
 
-// ---------- owner admin: roster management ----------
+// ---------- group admin: roster management (per current group) ----------
+const isSuper = () => !!(state.user && state.user.email && state.user.email.toLowerCase() === OWNER_EMAIL);
+
 function memberStatus(email) {
   const m = state.members.find(x => (x.email || "").toLowerCase() === email);
   if (!m) return "ברשימה - טרם נכנס";
-  return m.welcomed ? "נכנס והשלים את ההדרכה" : "נכנס - לפני סיום ההדרכה";
+  if (m.welcomed === true) return "נכנס והשלים את ההדרכה";
+  if (m.welcomed === false) return "נכנס - לפני סיום ההדרכה";
+  return "נכנס";
 }
 
 async function renderAdminList(sec) {
   const box = sec.querySelector("#admin-list");
   try {
-    const snap = await getDocs(collection(db, "roster"));
+    const snap = await getDocs(collG(state.group, "roster"));
     if (!snap.size) { box.innerHTML = `<div class="muted">הרשימה ריקה.</div>`; return; }
     box.innerHTML = "";
     snap.docs.map(d => { const r = d.data(); return { name: r.name, email: (r.email || d.id).toLowerCase() }; })
@@ -361,7 +382,7 @@ async function renderAdminList(sec) {
           del.addEventListener("click", async () => {
             if (del.dataset.armed) {
               del.disabled = true;
-              try { await deleteDoc(doc(db, "roster", email)); } catch (e) {}
+              try { await deleteDoc(docG(state.group, "roster", email)); } catch (e) {}
               renderAdminList(sec);
             } else {
               del.dataset.armed = "1"; del.textContent = "אישור הסרה";
@@ -383,20 +404,149 @@ function wireAdmin(sec) {
     const email = sec.querySelector("#a-email").value.trim().toLowerCase();
     if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.textContent = "מלא שם וכתובת Gmail תקינה."; return; }
     try {
-      await setDoc(doc(db, "roster", email), { name, email, addedAt: new Date().toISOString() });
+      await setDoc(docG(state.group, "roster", email), { name, email, addedAt: new Date().toISOString() });
       msg.textContent = name + " נוסף/ה לרשימה. שלח/י לו/לה את קישור ההצטרפות.";
       sec.querySelector("#a-name").value = ""; sec.querySelector("#a-email").value = "";
       renderAdminList(sec);
     } catch (e) { msg.textContent = "ההוספה נכשלה: " + (e.code || e); }
   });
   sec.querySelector("#a-copy").addEventListener("click", async () => {
-    const link = "https://idhadad-alt.github.io/arousal-cross/";
+    const link = joinLink(state.group);
     try { await navigator.clipboard.writeText(link); msg.textContent = "הקישור הועתק - שלח אותו רק למי שהזנת לרשימה."; }
     catch (e) {
       const t = document.createElement("textarea"); t.value = link; document.body.appendChild(t);
       t.select(); document.execCommand("copy"); t.remove();
       msg.textContent = "הקישור הועתק - שלח אותו רק למי שהזנת לרשימה.";
     }
+  });
+}
+
+// ---------- super-admin: groups management + aggregate stats (no names) ----------
+function fmtDateIL(d) { return d.toDateString(); }
+
+async function renderSuper(sec) {
+  const box = sec.querySelector("#super-groups");
+  box.innerHTML = `<div class="muted">טוען...</div>`;
+  try {
+    const snap = await getDocs(collection(db, "groups"));
+    state.allGroups = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const rows = [];
+    // include the legacy group as an aggregate row too
+    const legacyStats = await groupStats(LEGACY_GID);
+    rows.push({ id: LEGACY_GID, name: LEGACY_NAME, approved: true, stats: legacyStats });
+    for (const g of state.allGroups) rows.push({ ...g, stats: await groupStats(g.id) });
+    box.innerHTML = "";
+    rows.forEach(g => {
+      const item = document.createElement("div");
+      item.className = "item";
+      const st = g.stats;
+      const admins = (g.adminEmails || []).length;
+      item.innerHTML = `<span><b>${g.name || g.id}</b>
+          ${g.id !== LEGACY_GID && !g.approved ? '<span class="muted"> · ממתינה לאישור</span>' : ""}<br>
+          <span class="muted">${st.withPoint} משתתפים פעילים · ${st.activeToday} דיווחו היום · ${st.reportsToday} דיווחים היום` +
+          (st.withPoint ? ` · מרכז קבוצתי ${st.avgY > 0 ? "+" + st.avgY : st.avgY}/${st.avgX > 0 ? "+" + st.avgX : st.avgX}` : "") +
+          `</span></span>`;
+      const btns = document.createElement("span");
+      btns.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
+      if (g.id !== LEGACY_GID && !g.approved) {
+        const ap = document.createElement("button");
+        ap.className = "primary"; ap.textContent = "אישור קבוצה";
+        ap.addEventListener("click", async () => {
+          ap.disabled = true;
+          try { await updateDoc(doc(db, "groups", g.id), { approved: true }); } catch (e) {}
+          renderSuper(sec);
+        });
+        btns.appendChild(ap);
+      }
+      const view = document.createElement("button");
+      view.className = "ghost"; view.textContent = "צפייה בקבוצה";
+      view.addEventListener("click", async () => {
+        view.disabled = true;
+        try {
+          if (g.id !== LEGACY_GID) {
+            const r = await getDoc(docG(g.id, "roster", state.user.email));
+            if (!r.exists()) await setDoc(docG(g.id, "roster", state.user.email),
+              { name: state.name, email: state.user.email, addedAt: new Date().toISOString() });
+          }
+          if (!state.groups.includes(g.id)) {
+            const groups = [...state.groups, g.id];
+            await updateDoc(doc(db, "members", state.user.uid), { groups });
+            state.profile.groups = groups; state.groups = groups;
+          }
+          switchGroup(g.id);
+        } catch (e) { view.disabled = false; }
+      });
+      btns.appendChild(view);
+      item.appendChild(btns);
+      box.appendChild(item);
+    });
+    if (!rows.length) box.innerHTML = `<div class="muted">אין קבוצות.</div>`;
+  } catch (e) { box.innerHTML = `<div class="muted">טעינת הקבוצות נכשלה: ${e.code || e}</div>`; }
+}
+
+async function groupStats(gid) {
+  // aggregate only - no names are read into the UI from here
+  const out = { withPoint: 0, activeToday: 0, reportsToday: 0, avgX: 0, avgY: 0 };
+  try {
+    const msnap = await getDocs(collG(gid, "members"));
+    const today = new Date().toDateString();
+    let sx = 0, sy = 0;
+    msnap.docs.forEach(d => {
+      const lp = d.data().lastPoint;
+      if (lp && typeof lp.x === "number") {
+        out.withPoint++; sx += lp.x; sy += lp.y;
+        if (lp.at && new Date(lp.at).toDateString() === today) out.activeToday++;
+      }
+    });
+    if (out.withPoint) { out.avgX = Math.round(sx / out.withPoint * 10) / 10; out.avgY = Math.round(sy / out.withPoint * 10) / 10; }
+    const rsnap = await getDocs(collG(gid, "reports"));
+    rsnap.docs.forEach(d => {
+      const at = d.data().at;
+      if (at && at.toDate && at.toDate().toDateString() === today) out.reportsToday++;
+    });
+  } catch (e) {}
+  return out;
+}
+
+function wireSuper(sec) {
+  renderSuper(sec);
+  const msg = sec.querySelector("#g-msg");
+  sec.querySelector("#g-create").addEventListener("click", async () => {
+    const name = sec.querySelector("#g-name").value.trim();
+    const adminEmail = sec.querySelector("#g-admin").value.trim().toLowerCase();
+    if (!name) { msg.textContent = "מלא שם לקבוצה."; return; }
+    const adminEmails = adminEmail && adminEmail !== OWNER_EMAIL ? [adminEmail, OWNER_EMAIL] : [OWNER_EMAIL];
+    try {
+      const ref = await addDoc(collection(db, "groups"), {
+        name, adminEmails, approved: true, createdAt: new Date().toISOString()
+      });
+      await setDoc(docG(ref.id, "roster", OWNER_EMAIL),
+        { name: state.name, email: OWNER_EMAIL, addedAt: new Date().toISOString() });
+      if (adminEmail && adminEmail !== OWNER_EMAIL) {
+        await setDoc(docG(ref.id, "roster", adminEmail),
+          { name: "", email: adminEmail, addedAt: new Date().toISOString() });
+      }
+      msg.textContent = "הקבוצה נוצרה. קישור הצטרפות: " + joinLink(ref.id);
+      sec.querySelector("#g-name").value = ""; sec.querySelector("#g-admin").value = "";
+      renderSuper(sec);
+    } catch (e) { msg.textContent = "יצירת הקבוצה נכשלה: " + (e.code || e); }
+  });
+}
+
+// ---------- facilitator: request a new group (pending super-admin approval) ----------
+function wireFacilitator(sec) {
+  const msg = sec.querySelector("#f-msg");
+  sec.querySelector("#f-create").addEventListener("click", async () => {
+    const name = sec.querySelector("#f-name").value.trim();
+    if (!name) { msg.textContent = "מלא שם לקבוצה."; return; }
+    try {
+      await addDoc(collection(db, "groups"), {
+        name, adminEmails: [state.user.email.toLowerCase()], approved: false,
+        createdAt: new Date().toISOString()
+      });
+      msg.textContent = "הבקשה נשלחה - הקבוצה תיפתח אחרי אישור אלעד.";
+      sec.querySelector("#f-name").value = "";
+    } catch (e) { msg.textContent = "שליחת הבקשה נכשלה: " + (e.code || e); }
   });
 }
 
@@ -428,21 +578,9 @@ function renderSettings() {
     <p class="muted" id="rem-msg"></p>
     <hr style="border-color:var(--line);margin:22px 0">
     <button class="ghost" id="btn-out">יציאה</button>
-    ${state.user.email && state.user.email.toLowerCase() === OWNER_EMAIL ? `
-    <hr style="border-color:var(--line);margin:22px 0">
-    <h3 style="margin:8px 0">ניהול צוות</h3>
-    <p class="muted">מי שמופיע כאן מורשה להיכנס. שלח את קישור ההצטרפות בעצמך - האפליקציה לא שולחת דבר מאליה.</p>
-    <div class="list" id="admin-list"><div class="muted">טוען...</div></div>
-    <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">שם</label>
-    <input type="text" id="a-name" maxlength="40" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
-    <label style="display:block;font-size:.82rem;color:var(--muted);margin:10px 0 4px">כתובת ה-Gmail שלו</label>
-    <input type="text" id="a-email" dir="ltr" placeholder="name@gmail.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
-    <div class="row" style="display:flex;gap:10px;margin-top:14px">
-      <button class="primary" id="a-add" style="flex:1">הוספה לרשימה</button>
-      <button class="ghost" id="a-copy" style="flex:1">העתקת קישור הצטרפות</button>
-    </div>
-    <p class="muted" id="a-msg"></p>` : ``}
+    <div id="admin-slot"></div>
   </div>`;
+  fillAdminSlot(sec);
   sec.querySelector("#btn-rem").addEventListener("click", async () => {
     const msg = $("#rem-msg"); msg.textContent = "";
     if (on) { await saveReminders({ enabled: false, tokens: [] }); renderSettings(); return; }
@@ -458,7 +596,63 @@ function renderSettings() {
     catch (e) { msg.textContent = "שמירת השעות נכשלה: " + (e.code || e); }
   });
   sec.querySelector("#btn-out").addEventListener("click", () => signOut(auth));
-  if (sec.querySelector("#a-add")) wireAdmin(sec);
+}
+
+async function fillAdminSlot(sec) {
+  const slot = sec.querySelector("#admin-slot");
+  if (!slot) return;
+  let gdoc = null;
+  if (state.group !== LEGACY_GID) {
+    try { const s = await getDoc(doc(db, "groups", state.group)); gdoc = s.exists() ? s.data() : null; } catch (e) {}
+  }
+  const email = (state.user.email || "").toLowerCase();
+  const groupAdmin = isSuper() || (gdoc && Array.isArray(gdoc.adminEmails) && gdoc.adminEmails.includes(email));
+  let html = "";
+  if (groupAdmin) {
+    html += `
+    <hr style="border-color:var(--line);margin:22px 0">
+    <h3 style="margin:8px 0">ניהול הקבוצה${state.groupNames[state.group] ? " · " + state.groupNames[state.group] : ""}</h3>
+    <p class="muted">מי שמופיע כאן מורשה להיכנס לקבוצה הזו. שלח את קישור ההצטרפות בעצמך - האפליקציה לא שולחת דבר מאליה.</p>
+    <div class="list" id="admin-list"><div class="muted">טוען...</div></div>
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">שם</label>
+    <input type="text" id="a-name" maxlength="40" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:10px 0 4px">כתובת ה-Gmail שלו</label>
+    <input type="text" id="a-email" dir="ltr" placeholder="name@gmail.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <div class="row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="primary" id="a-add" style="flex:1">הוספה לרשימה</button>
+      <button class="ghost" id="a-copy" style="flex:1">העתקת קישור הצטרפות</button>
+    </div>
+    <p class="muted" id="a-msg"></p>`;
+  }
+  if (isSuper()) {
+    html += `
+    <hr style="border-color:var(--line);margin:22px 0">
+    <h3 style="margin:8px 0">כל הקבוצות (סופר-אדמין)</h3>
+    <p class="muted">סטטיסטיקה מצטברת בלבד, ללא שמות. צפייה בקבוצה מעבירה אותך אליה כמשתתף.</p>
+    <div class="list" id="super-groups"><div class="muted">טוען...</div></div>
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">שם קבוצה חדשה</label>
+    <input type="text" id="g-name" maxlength="60" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:10px 0 4px">מנהל הקבוצה (Gmail, אופציונלי)</label>
+    <input type="text" id="g-admin" dir="ltr" placeholder="name@gmail.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <div class="row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="primary" id="g-create" style="flex:1">יצירת קבוצה</button>
+    </div>
+    <p class="muted" id="g-msg"></p>`;
+  } else {
+    html += `
+    <hr style="border-color:var(--line);margin:22px 0">
+    <h3 style="margin:8px 0">מנחים: פתיחת קבוצה חדשה</h3>
+    <p class="muted">הקבוצה תיפתח אחרי אישור אלעד, ואז תוכל להזין שם ומוזמנים.</p>
+    <input type="text" id="f-name" maxlength="60" placeholder="שם הקבוצה" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <div class="row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="ghost" id="f-create" style="flex:1">שליחת בקשה לפתיחת קבוצה</button>
+    </div>
+    <p class="muted" id="f-msg"></p>`;
+  }
+  slot.innerHTML = html;
+  if (slot.querySelector("#a-add")) wireAdmin(sec);
+  if (slot.querySelector("#g-create")) wireSuper(sec);
+  if (slot.querySelector("#f-create")) wireFacilitator(sec);
 }
 
 async function enableReminders() {
@@ -536,12 +730,16 @@ async function enterApp() {
   $("#tabs").classList.remove("hidden");
   $("#who").textContent = state.name;
   if (unsubMembers) unsubMembers();
-  unsubMembers = onSnapshot(collection(db, "members"), (snap) => {
+  unsubMembers = onSnapshot(collG(state.group, "members"), (snap) => {
     state.members = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (state.group === LEGACY_GID) {
+      const mine = state.members.find(m => m.id === state.user.uid);
+      if (mine) state.profile = Object.assign({}, state.profile, mine);
+    }
     refreshView();
   }, () => {});
   if (unsubReports) unsubReports();
-  const q = query(collection(db, "reports"), where("uid", "==", state.user.uid), limit(120));
+  const q = query(collG(state.group, "reports"), where("uid", "==", state.user.uid), limit(120));
   unsubReports = onSnapshot(q, (snap) => {
     state.myReports = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => ((b.at && b.at.toDate) ? b.at.toDate() : 0) - ((a.at && a.at.toDate) ? a.at.toDate() : 0));
@@ -552,16 +750,65 @@ async function enterApp() {
     onMessage(messaging, () => {});
   } catch (e) {}
   showView("cross");
+  // profile (welcomed, reminders, group membership) lives in top-level members/{uid}
   let remAsked = true;
   try {
-    const msnap = await getDoc(doc(db, "members", state.user.uid));
-    const md = msnap.exists() ? msnap.data() : {};
-    state.welcomed = !!md.welcomed;
-    if (!state.welcomed) { showView("help"); return; }
-    remAsked = !!(md.reminders && md.reminders.asked);
-  } catch (e) { state.welcomed = true; remAsked = true; }
+    const psnap = await getDoc(doc(db, "members", state.user.uid));
+    state.profile = psnap.exists() ? psnap.data() : {};
+    state.welcomed = !!state.profile.welcomed;
+    if (!state.welcomed) { showView("help"); }
+    remAsked = !!(state.profile.reminders && state.profile.reminders.asked);
+    let groups = Array.isArray(state.profile.groups) && state.profile.groups.length
+      ? state.profile.groups.slice() : [LEGACY_GID];
+    if (!groups.includes(state.group)) {
+      groups.push(state.group);
+      try { await updateDoc(doc(db, "members", state.user.uid), { groups }); }
+      catch (e) { await setDoc(doc(db, "members", state.user.uid), { groups }, { merge: true }); }
+      state.profile.groups = groups;
+    }
+    state.groups = groups;
+    await loadGroupNames();
+  } catch (e) { state.welcomed = true; remAsked = true; state.groups = [state.group]; }
+  renderGroupSwitcher();
   if (QA_REM) remAsked = !!qaRem.get().asked;
+  if (!state.welcomed) return;
   if (!remAsked) showReminderPrompt();
+}
+
+async function loadGroupNames() {
+  state.groupNames = {};
+  for (const gid of state.groups) {
+    if (gid === LEGACY_GID) { state.groupNames[gid] = LEGACY_NAME; continue; }
+    try {
+      const gsnap = await getDoc(doc(db, "groups", gid));
+      state.groupNames[gid] = gsnap.exists() ? (gsnap.data().name || gid) : gid;
+    } catch (e) { state.groupNames[gid] = gid; }
+  }
+}
+
+function renderGroupSwitcher() {
+  const who = $("#who");
+  if (state.groups.length < 2) { who.textContent = state.name; return; }
+  who.innerHTML = "";
+  const sel = document.createElement("select");
+  sel.style.cssText = "font:inherit;background:transparent;border:1px solid var(--line);border-radius:8px;padding:2px 6px";
+  state.groups.forEach(gid => {
+    const opt = document.createElement("option");
+    opt.value = gid; opt.textContent = (state.groupNames[gid] || gid) + " · " + state.name;
+    if (gid === state.group) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener("change", () => { if (sel.value !== state.group) switchGroup(sel.value); });
+  who.appendChild(sel);
+}
+
+async function switchGroup(gid) {
+  state.group = gid;
+  localStorage.setItem("currentGroup", gid);
+  state.draft = null; closeOverlay();
+  const name = await checkRoster(state.user, gid).catch(() => null);
+  if (name) state.name = name;
+  enterApp();
 }
 
 function showView(v) {
@@ -619,6 +866,7 @@ function helpHTML(firstTime) {
       <p>הכניסה אישית ומרצון, לחברי הצוות הרשומים בלבד. המילה, השיר והתמונה אופציונליים תמיד.
         מה שאתה משתף גלוי לחברי הצוות בלבד.</p>
       <p>באותו דפדפן הכניסה נשמרת - מכאן והלאה נכנסים ישר לצלב. אחרי יציאה מהחשבון, ניקוי נתוני גלישה או מעבר למכשיר חדש נכנסים שוב עם גוגל.</p>
+      <p>מנהל המערכת (אלעד) יכול לצפות בדיווחים בכל הקבוצות. סטטיסטיקה רוחבית בין קבוצות מוצגת ללא שמות.</p>
     </div>
     ${firstTime ? `<div style="text-align:center;margin:18px 0 8px">
       <button class="primary" id="btn-start">מתחילים</button></div>` : ``}
