@@ -3,7 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebas
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
          getRedirectResult, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, addDoc, collection, query, where,
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, query, where,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { getMessaging, getToken, onMessage }
@@ -26,6 +26,23 @@ let messaging = null;
 const $ = (s) => document.querySelector(s);
 const state = { user: null, name: "", members: [], myReports: [], view: "cross",
   histMode: "today", showAvg: false, draft: null, welcomed: true };
+
+const DEFAULT_TIMES = ["07:50", "12:50", "19:50"];
+const QA_REM = new URLSearchParams(location.search).has("qarem");
+const qaRem = {
+  get() { try { return JSON.parse(localStorage.getItem("qaReminders") || "{}"); } catch (e) { return {}; } },
+  merge(patch) { const v = Object.assign({}, qaRem.get(), patch); localStorage.setItem("qaReminders", JSON.stringify(v)); }
+};
+function myMember() { return state.members.find(x => x.id === state.user.uid) || {}; }
+function myReminders() { if (QA_REM) return qaRem.get(); return myMember().reminders || {}; }
+async function saveReminders(patch) {
+  if (QA_REM) { qaRem.merge(patch); return; }
+  const ref = doc(db, "members", state.user.uid);
+  const flat = {};
+  for (const k of Object.keys(patch)) flat["reminders." + k] = patch[k];
+  try { await updateDoc(ref, flat); }
+  catch (e) { await setDoc(ref, flat, { mergeFields: Object.keys(flat) }); }
+}
 
 const HEB_DAYS = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
 const QUADS = {
@@ -385,17 +402,28 @@ function wireAdmin(sec) {
 
 function renderSettings() {
   const sec = $("#view-settings");
-  const m = state.members.find(x => x.id === state.user.uid) || {};
-  const on = !!(m.reminders && m.reminders.enabled);
+  const rem = myReminders();
+  const on = !!rem.enabled;
+  const times = (rem.times && rem.times.length ? rem.times : DEFAULT_TIMES);
+  const tstyle = "padding:8px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);width:96px";
   let iosNote = "";
   if (isIOS() && !isStandalone())
     iosNote = `<p class="muted">באייפון: כדי לקבל תזכורות צריך קודם להוסיף את האתר למסך הבית
       (שיתוף ← הוספה למסך הבית) ואז להיכנס מהאייקון ולהפעיל כאן.</p>`;
   sec.innerHTML = `<div style="max-width:520px;margin:0 auto">
     <h3 style="margin:8px 0">תזכורות לדיווח</h3>
-    <p class="muted">בערך 10 דקות לפני 08:00, 13:00, 20:00. בחירה אישית - אפשר לכבות בכל רגע.</p>
+    <p class="muted">בחירה אישית - אפשר לכבות בכל רגע ולהתאים את השעות. ברירת מחדל: 07:50, 12:50, 19:50.
+      (בשלב זה התזכורות עדיין לא נשלחות בפועל)</p>
     ${iosNote}
-    <button class="${on ? "ghost" : "primary"}" id="btn-rem">${on ? "כיבוי התזכורות" : "הפעלת תזכורות"}</button>
+    <div style="display:flex;gap:8px;direction:ltr;justify-content:center;margin:10px 0">
+      <input type="time" id="rt0" value="${times[0] || ""}" style="${tstyle}">
+      <input type="time" id="rt1" value="${times[1] || ""}" style="${tstyle}">
+      <input type="time" id="rt2" value="${times[2] || ""}" style="${tstyle}">
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="${on ? "ghost" : "primary"}" id="btn-rem" style="flex:1">${on ? "כיבוי התזכורות" : "הפעלת תזכורות"}</button>
+      <button class="ghost" id="btn-times" style="flex:1">שמירת שעות</button>
+    </div>
     <p class="muted" id="rem-msg"></p>
     <hr style="border-color:var(--line);margin:22px 0">
     <button class="ghost" id="btn-out">יציאה</button>
@@ -414,29 +442,67 @@ function renderSettings() {
     </div>
     <p class="muted" id="a-msg"></p>` : ``}
   </div>`;
-  sec.querySelector("#btn-rem").addEventListener("click", () => toggleReminders(!on));
+  sec.querySelector("#btn-rem").addEventListener("click", async () => {
+    const msg = $("#rem-msg"); msg.textContent = "";
+    if (on) { await saveReminders({ enabled: false, tokens: [] }); renderSettings(); return; }
+    const ok = await enableReminders();
+    if (ok) { renderSettings(); $("#rem-msg").textContent = "התזכורות הופעלו."; }
+    else msg.textContent = "ההתראות לא אושרו במכשיר.";
+  });
+  sec.querySelector("#btn-times").addEventListener("click", async () => {
+    const msg = $("#rem-msg");
+    const vals = [0, 1, 2].map(i => sec.querySelector("#rt" + i).value).filter(v => /^\d{2}:\d{2}$/.test(v));
+    if (!vals.length) { msg.textContent = "צריך לפחות שעה אחת תקינה."; return; }
+    try { await saveReminders({ times: vals }); msg.textContent = "השעות נשמרו: " + vals.join(", "); }
+    catch (e) { msg.textContent = "שמירת השעות נכשלה: " + (e.code || e); }
+  });
   sec.querySelector("#btn-out").addEventListener("click", () => signOut(auth));
   if (sec.querySelector("#a-add")) wireAdmin(sec);
 }
 
-async function toggleReminders(enable) {
-  const msg = $("#rem-msg"); msg.textContent = "";
-  const ref = doc(db, "members", state.user.uid);
-  if (!enable) {
-    await setDoc(ref, { reminders: { enabled: false, tokens: [] } }, { merge: true });
-    renderSettings(); return;
-  }
+async function enableReminders() {
   try {
     const perm = await Notification.requestPermission();
-    if (perm !== "granted") { msg.textContent = "ההתראות לא אושרו במכשיר."; return; }
+    if (perm !== "granted") return false;
     if (!messaging) messaging = getMessaging(app);
     const reg = await navigator.serviceWorker.register("firebase-messaging-sw.js");
     const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
-    if (!token) { msg.textContent = "לא נוצר אסימון התראות."; return; }
-    await setDoc(ref, { reminders: { enabled: true, tokens: [token], updatedAt: new Date().toISOString() } }, { merge: true });
-    renderSettings();
-    $("#rem-msg").textContent = "התזכורות הופעלו.";
-  } catch (e) { msg.textContent = "לא הצליח: " + (e.code || e.message); }
+    if (!token) return false;
+    const cur = myReminders();
+    const patch = { enabled: true, tokens: [token], updatedAt: new Date().toISOString() };
+    if (!cur.times || !cur.times.length) patch.times = DEFAULT_TIMES;
+    await saveReminders(patch);
+    return true;
+  } catch (e) { return false; }
+}
+
+function showReminderPrompt() {
+  const o = $("#overlay");
+  o.innerHTML = `<div class="backdrop"></div><div class="popup">
+    <h3 style="margin:2px 0 8px">תזכורות לדיווח?</h3>
+    <p>אפשר לקבל תזכורת עד שלוש פעמים ביום - ברירת המחדל 07:50, 12:50, 19:50.
+      אפשר לכבות בכל רגע או להתאים את השעות אישית בהגדרות.</p>
+    <p class="muted">נרשמים ונכנסים עם גוגל רק פעם אחת - מכאן והלאה הכניסה ישירה לצלב.</p>
+    <div class="row" style="display:flex;gap:10px;margin-top:12px">
+      <button class="primary" id="rem-yes" style="flex:1">הפעלת תזכורות</button>
+      <button class="ghost" id="rem-no" style="flex:1">לא עכשיו</button>
+    </div>
+    <p class="muted" id="rem-pop-msg" style="margin:8px 0 0"></p>
+  </div>`;
+  const yes = o.querySelector("#rem-yes"), no = o.querySelector("#rem-no"), msg = o.querySelector("#rem-pop-msg");
+  no.addEventListener("click", async () => {
+    try { await saveReminders({ asked: true }); } catch (e) {}
+    closeOverlay();
+  });
+  yes.addEventListener("click", async () => {
+    yes.disabled = true;
+    try { await saveReminders({ asked: true }); } catch (e) {}
+    const ok = await enableReminders();
+    if (ok) { closeOverlay(); return; }
+    msg.textContent = "ההתראות לא אושרו במכשיר. אפשר להפעיל בכל עת מהגדרות.";
+    yes.classList.add("hidden");
+    no.textContent = "סגור";
+  });
 }
 // ---------- data + navigation ----------
 let unsubMembers = null, unsubReports = null;
@@ -462,11 +528,16 @@ async function enterApp() {
     onMessage(messaging, () => {});
   } catch (e) {}
   showView("cross");
+  let remAsked = true;
   try {
     const msnap = await getDoc(doc(db, "members", state.user.uid));
-    state.welcomed = !!(msnap.exists() && msnap.data().welcomed);
-    if (!state.welcomed) showView("help");
-  } catch (e) { state.welcomed = true; }
+    const md = msnap.exists() ? msnap.data() : {};
+    state.welcomed = !!md.welcomed;
+    if (!state.welcomed) { showView("help"); return; }
+    remAsked = !!(md.reminders && md.reminders.asked);
+  } catch (e) { state.welcomed = true; remAsked = true; }
+  if (QA_REM) remAsked = !!qaRem.get().asked;
+  if (!remAsked) showReminderPrompt();
 }
 
 function showView(v) {
@@ -515,14 +586,15 @@ function helpHTML(firstTime) {
           את הדיווח האחרון שלו (שם, יום ושעה, ומה שצירף). "ממוצע צוותי" מציג את מרכז הכובד
           של הצוות. שים לב: כאן מוצג המצב העדכני של כל חבר, לא ההיסטוריה שלו.</li>
         <li><b>היסטוריה</b> - הדיווחים שלך: היום או השבוע, כנקודות על הצלב.</li>
-        <li><b>הגדרות</b> - הפעלה אישית של תזכורות לדיווח (בשלב זה התזכורות עדיין לא נשלחות)
-          ויציאה מהחשבון.</li>
+        <li><b>הגדרות</b> - הפעלה אישית של תזכורות לדיווח, התאמת שעות התזכורת, וכיבוי בכל רגע.
+          (בשלב זה התזכורות עדיין לא נשלחות) גם יציאה מהחשבון.</li>
       </ol>
     </div>
     <div class="card">
       <h3>פרטיות ובחירה</h3>
       <p>הכניסה אישית ומרצון, לחברי הצוות הרשומים בלבד. המילה, השיר והתמונה אופציונליים תמיד.
         מה שאתה משתף גלוי לחברי הצוות בלבד.</p>
+      <p>נרשמים ונכנסים עם גוגל רק פעם אחת - מכאן והלאה הכניסה ישירה לצלב.</p>
     </div>
     ${firstTime ? `<div style="text-align:center;margin:18px 0 8px">
       <button class="primary" id="btn-start">מתחילים</button></div>` : ``}
@@ -538,6 +610,7 @@ function renderHelp() {
       state.welcomed = true;
       try { await setDoc(doc(db, "members", state.user.uid), { welcomed: true }, { merge: true }); } catch (e) {}
       showView("cross");
+      if (!myReminders().asked) showReminderPrompt();
     });
   }
 }
