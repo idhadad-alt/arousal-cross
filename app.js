@@ -128,6 +128,14 @@ function popup(html) {
   o.querySelector("#pp-close").addEventListener("click", closeOverlay);
 }
 function closeOverlay() { $("#overlay").innerHTML = ""; }
+function pointPopup(m) {
+  const t = new Date(m.lastPoint.at);
+  let html = `<h4>${m.name}</h4><div class="muted">${fmtTime(t)}</div>`;
+  if (m.additions && m.additions.word) html += `<div>מילה: ${m.additions.word}</div>`;
+  if (m.additions && m.additions.songUrl) html += `<div><a href="${m.additions.songUrl}" target="_blank" rel="noopener">השיר של הרגע</a></div>`;
+  if (m.additions && m.additions.photo) html += `<img src="${m.additions.photo}" alt="תמונת רגע">`;
+  popup(html);
+}
 // ---------- my cross (place + report) ----------
 function renderCross() {
   const sec = $("#view-cross");
@@ -136,7 +144,7 @@ function renderCross() {
   const wrap = sec.querySelector("#cw");
   wireQuadVocab(wrap);
   const mine = state.members.find(m => m.id === state.user.uid);
-  if (mine && mine.lastPoint) addPointEl(wrap, mine.lastPoint.x, mine.lastPoint.y, "mine");
+  if (mine && mine.lastPoint) addPointEl(wrap, mine.lastPoint.x, mine.lastPoint.y, "mine", () => pointPopup(mine));
   if (state.draft) addPointEl(wrap, state.draft.x, state.draft.y, "draft");
   wrap.addEventListener("click", (e) => {
     if (e.target.closest(".pt") || e.target.closest(".quad .qlabel")) return;
@@ -158,7 +166,14 @@ function openReportSheet() {
       איכות ${state.draft.x > 0 ? "+" + state.draft.x : state.draft.x}</div>
     <label>מילה (אופציונלי)</label><input type="text" id="f-word" maxlength="60">
     <label>קישור לשיר (אופציונלי)</label><input type="url" id="f-song" placeholder="https://...">
-    <label>תמונה של הרגע (אופציונלי)</label><input type="file" id="f-photo" accept="image/*">
+    <label>תמונה של הרגע (אופציונלי)</label>
+    <div class="row" style="margin-top:2px">
+      <button class="ghost" id="f-cam-btn" type="button">צילום עכשיו</button>
+      <button class="ghost" id="f-gal-btn" type="button">מהגלריה</button>
+    </div>
+    <input type="file" id="f-camera" accept="image/*" capture="environment" style="display:none">
+    <input type="file" id="f-photo" accept="image/*" style="display:none">
+    <div class="muted hidden" id="f-photo-name" style="margin-top:6px"></div>
     <div class="row">
       <button class="primary" id="f-save">שמירה</button>
       <button class="ghost" id="f-cancel">ביטול</button>
@@ -166,6 +181,14 @@ function openReportSheet() {
   o.querySelector(".backdrop").addEventListener("click", () => { state.draft = null; closeOverlay(); renderCross(); });
   o.querySelector("#f-cancel").addEventListener("click", () => { state.draft = null; closeOverlay(); renderCross(); });
   o.querySelector("#f-save").addEventListener("click", saveReport);
+  const camIn = o.querySelector("#f-camera"), galIn = o.querySelector("#f-photo"), pName = o.querySelector("#f-photo-name");
+  o.querySelector("#f-cam-btn").addEventListener("click", () => camIn.click());
+  o.querySelector("#f-gal-btn").addEventListener("click", () => galIn.click());
+  const showPick = (inp, other) => inp.addEventListener("change", () => {
+    if (inp.files[0]) { other.value = ""; pName.textContent = "נבחרה תמונה: " + inp.files[0].name; pName.classList.remove("hidden"); }
+    else { pName.classList.add("hidden"); }
+  });
+  showPick(camIn, galIn); showPick(galIn, camIn);
 }
 // ---------- photo compression + save ----------
 function compressPhoto(file) {
@@ -192,7 +215,7 @@ async function saveReport() {
   try {
     const word = $("#f-word").value.trim();
     const song = $("#f-song").value.trim();
-    const pf = $("#f-photo").files[0];
+    const pf = $("#f-camera").files[0] || $("#f-photo").files[0];
     const rec = { uid: state.user.uid, name: state.name,
       x: state.draft.x, y: state.draft.y, at: serverTimestamp() };
     if (word) rec.word = word;
@@ -226,14 +249,7 @@ function renderTeam() {
   wireQuadVocab(wrap);
   state.members.filter(m => m.lastPoint).forEach(m => {
     const cls = m.id === state.user.uid ? "mine" : "other";
-    addPointEl(wrap, m.lastPoint.x, m.lastPoint.y, cls, () => {
-      const t = new Date(m.lastPoint.at);
-      let html = `<h4>${m.name}</h4><div class="muted">${fmtTime(t)}</div>`;
-      if (m.additions && m.additions.word) html += `<div>מילה: ${m.additions.word}</div>`;
-      if (m.additions && m.additions.songUrl) html += `<div><a href="${m.additions.songUrl}" target="_blank" rel="noopener">השיר של הרגע</a></div>`;
-      if (m.additions && m.additions.photo) html += `<img src="${m.additions.photo}" alt="תמונת רגע">`;
-      popup(html);
-    });
+    addPointEl(wrap, m.lastPoint.x, m.lastPoint.y, cls, () => pointPopup(m));
   });
   if (state.showAvg) {
     const pts = state.members.filter(m => m.lastPoint);
