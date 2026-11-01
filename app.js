@@ -113,7 +113,7 @@ function quadInfo(x, y) {
 function wireQuadVocab(wrap) {
   wrap.querySelectorAll(".quad").forEach(q => {
     q.addEventListener("click", (e) => {
-      if (e.target.closest(".pt")) return;
+      if (!e.target.closest(".qlabel")) return;
       const info = QUADS[q.dataset.q];
       popup(`<h4>${info.title}</h4><div class="vocab">${info.vocab}</div>`);
     });
