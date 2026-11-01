@@ -25,7 +25,7 @@ let messaging = null;
 
 const $ = (s) => document.querySelector(s);
 const state = { user: null, name: "", members: [], myReports: [], view: "cross",
-  histMode: "today", showAvg: false, draft: null };
+  histMode: "today", showAvg: false, draft: null, welcomed: true };
 
 const HEB_DAYS = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
 const QUADS = {
@@ -70,7 +70,7 @@ onAuthStateChanged(auth, async (user) => {
 function showGate(signedIn=false) {
   $("#gate").classList.remove("hidden");
   $("#tabs").classList.add("hidden");
-  ["cross","team","history","settings"].forEach(v => $("#view-"+v).classList.add("hidden"));
+  ["cross","team","history","settings","help"].forEach(v => $("#view-"+v).classList.add("hidden"));
   $("#btn-login").textContent = signedIn ? "כניסה עם חשבון אחר" : "כניסה עם חשבון Google";
   $("#who").textContent = "";
   state.user = null;
@@ -359,7 +359,7 @@ async function toggleReminders(enable) {
 // ---------- data + navigation ----------
 let unsubMembers = null, unsubReports = null;
 
-function enterApp() {
+async function enterApp() {
   $("#gate").classList.add("hidden");
   $("#tabs").classList.remove("hidden");
   $("#who").textContent = state.name;
@@ -380,11 +380,16 @@ function enterApp() {
     onMessage(messaging, () => {});
   } catch (e) {}
   showView("cross");
+  try {
+    const msnap = await getDoc(doc(db, "members", state.user.uid));
+    state.welcomed = !!(msnap.exists() && msnap.data().welcomed);
+    if (!state.welcomed) showView("help");
+  } catch (e) { state.welcomed = true; }
 }
 
 function showView(v) {
   state.view = v;
-  ["cross","team","history","settings"].forEach(k => {
+  ["cross","team","history","settings","help"].forEach(k => {
     $("#view-" + k).classList.toggle("hidden", k !== v);
   });
   document.querySelectorAll("nav.tabs button").forEach(b =>
@@ -398,6 +403,61 @@ function refreshView() {
   else if (state.view === "team") renderTeam();
   else if (state.view === "history") renderHistory();
   else if (state.view === "settings") renderSettings();
+  else if (state.view === "help") renderHelp();
+}
+
+
+// ---------- instructions / welcome ----------
+function helpHTML(firstTime) {
+  return `<div class="help">
+    ${firstTime ? `<h2 style="margin:6px 0 2px">ברוכים הבאים לצלב העוררות</h2>
+      <p class="muted">רגע לפני שמתחילים - סקירה קצרה של הרעיון והאפשרויות.</p>` :
+      `<h2 style="margin:6px 0 2px">הוראות וסיור</h2>`}
+    <div class="card">
+      <h3>מה זה?</h3>
+      <p>צלב העוררות הוא מפה משותפת של מצב הרגע. כל אחד ממקם נקודה לפי שני צירים:
+        אנרגיה (מתת-עוררות עד יתר-עוררות) ואיכות (מ"לא נעימה / מתכווצת" עד "נעימה / מתרחבת").
+        הצירים יוצרים ארבע שכונות: סוערת, התרגשות ויוזמה, כובד וניתוק, מנוחה והחלמה.
+        לחיצה על שם של שכונה מציגה את המילים שלה.</p>
+      <h3>למה?</h3>
+      <p>כדי לאפשר לצוות להמשיך לנטר את המצבים האישיים וגם את המצב המשותף,
+        ולשמור על דופק של הצוות לאורך היום.</p>
+    </div>
+    <div class="card">
+      <h3>סיור קצר</h3>
+      <ol>
+        <li><b>הצלב</b> - לחיצה במקום שמתאר את הרגע ממקמת את הנקודה ופותחת דיווח.
+          אפשר (לא חובה) לצרף מילה, קישור לשיר, או תמונה - ב"צילום עכשיו" מהמצלמה או "מהגלריה".
+          שמירה מעדכנת את המיקום שלך. לחיצה על הנקודה שלך מציגה את הדיווח האחרון שלך.</li>
+        <li><b>הצוות</b> - הנקודות העדכניות של כל חברי הצוות. לחיצה על נקודה של חבר מציגה
+          את הדיווח האחרון שלו (שם, יום ושעה, ומה שצירף). "ממוצע צוותי" מציג את מרכז הכובד
+          של הצוות. שים לב: כאן מוצג המצב העדכני של כל חבר, לא ההיסטוריה שלו.</li>
+        <li><b>היסטוריה</b> - הדיווחים שלך: היום או השבוע, כנקודות על הצלב.</li>
+        <li><b>הגדרות</b> - הפעלה אישית של תזכורות לדיווח (בשלב זה התזכורות עדיין לא נשלחות)
+          ויציאה מהחשבון.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>פרטיות ובחירה</h3>
+      <p>הכניסה אישית ומרצון, לחברי הצוות הרשומים בלבד. המילה, השיר והתמונה אופציונליים תמיד.
+        מה שאתה משתף גלוי לחברי הצוות בלבד.</p>
+    </div>
+    ${firstTime ? `<div style="text-align:center;margin:18px 0 8px">
+      <button class="primary" id="btn-start">מתחילים</button></div>` : ``}
+  </div>`;
+}
+
+function renderHelp() {
+  const sec = $("#view-help");
+  const firstTime = !state.welcomed;
+  sec.innerHTML = helpHTML(firstTime);
+  if (firstTime) {
+    sec.querySelector("#btn-start").addEventListener("click", async () => {
+      state.welcomed = true;
+      try { await setDoc(doc(db, "members", state.user.uid), { welcomed: true }, { merge: true }); } catch (e) {}
+      showView("cross");
+    });
+  }
 }
 
 document.querySelectorAll("nav.tabs button").forEach(b =>
