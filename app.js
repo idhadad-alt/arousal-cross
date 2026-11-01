@@ -759,8 +759,11 @@ function wireFacilitator(sec) {
       catch (e) { await setDoc(doc(db, "members", state.user.uid), { groups }, { merge: true }); }
       state.profile.groups = groups; state.groups = groups;
       await loadGroupNames(); renderGroupSwitcher();
-      msg.textContent = "הקבוצה נוצרה. קישור הצטרפות: " + joinLink(ref.id);
-      sec.querySelector("#f-name").value = "";
+      const link = joinLink(ref.id);
+      await switchGroup(ref.id);
+      showView("settings");
+      const amsg = document.querySelector("#a-msg");
+      if (amsg) amsg.textContent = "הקבוצה נוצרה וזה ממשק הניהול שלה. קישור הצטרפות: " + link;
     } catch (e) { msg.textContent = "יצירת הקבוצה נכשלה: " + (e.code || e); }
     btn.disabled = false;
   });
@@ -804,6 +807,7 @@ function renderSettings() {
     iosNote = `<p class="muted">באייפון: כדי לקבל תזכורות צריך קודם להוסיף את האתר למסך הבית
       (שיתוף ← הוספה למסך הבית) ואז להיכנס מהאייקון ולהפעיל כאן.</p>`;
   sec.innerHTML = `<div style="max-width:520px;margin:0 auto">
+    <p class="muted" id="role-line" style="text-align:center;margin:4px 0"></p>
     <h3 style="margin:8px 0">תזכורות לדיווח</h3>
     <p class="muted">בחירה אישית - אפשר לכבות בכל רגע ולהתאים את השעות. ברירת מחדל: 07:50, 12:50, 19:50.
       (בשלב זה התזכורות עדיין לא נשלחות בפועל)</p>
@@ -850,12 +854,18 @@ async function fillAdminSlot(sec) {
   }
   const email = (state.user.email || "").toLowerCase();
   const groupAdmin = isSuper() || (gdoc && Array.isArray(gdoc.adminEmails) && gdoc.adminEmails.includes(email));
+  const roleLine = sec.querySelector("#role-line");
+  if (roleLine) roleLine.textContent = "התפקיד שלך: " +
+    (isSuper() ? "סופר־אדמין (בעל האפליקציה)" :
+     groupAdmin ? "מנהל הקבוצה" + (state.isAdmin ? " ומנחה" : "") :
+     state.isAdmin ? "מנחה" : "משתתף");
   let html = "";
   if (groupAdmin) {
     html += `
     <hr style="border-color:var(--line);margin:22px 0">
-    <h3 style="margin:8px 0">ניהול הקבוצה${state.groupNames[state.group] ? " · " + state.groupNames[state.group] : ""}</h3>
-    <p class="muted">מי שמופיע כאן מורשה להיכנס לקבוצה הזו. שלח את קישור ההצטרפות בעצמך - האפליקציה לא שולחת דבר מאליה.</p>
+    <div class="muted" style="font-size:.78rem;letter-spacing:.02em">ממשק מנהל קבוצה</div>
+    <h3 style="margin:2px 0 8px">ניהול הקבוצה${state.groupNames[state.group] ? " · " + state.groupNames[state.group] : ""}</h3>
+    <p class="muted">כאן מנהלים את הקבוצה הזו: מי מורשה להיכנס, קישור ההצטרפות ותמונת הקבוצה. שלח את הקישור בעצמך - האפליקציה לא שולחת דבר מאליה. כל מנחה שפותח קבוצה מקבל את אותו הממשק בדיוק עבור הקבוצה שלו.</p>
     <div class="list" id="admin-list"><div class="muted">טוען...</div></div>
     <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">שם</label>
     <input type="text" id="a-name" maxlength="40" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
@@ -876,7 +886,10 @@ async function fillAdminSlot(sec) {
   if (isSuper()) {
     html += `
     <hr style="border-color:var(--line);margin:22px 0">
-    <h3 style="margin:8px 0">מנחים מורשים (אדמינים)</h3>
+    <div class="muted" style="font-size:.78rem;letter-spacing:.02em">ממשק סופר־אדמין - גלוי רק לך</div>
+    <h3 style="margin:2px 0 8px">ניהול מערכת</h3>
+    <p class="muted">אישור והסרת מנחים, מבט על כל הקבוצות בסטטיסטיקה מצטברת ללא שמות, ופתיחת קבוצה עם מנהל ממונה. ניהול של קבוצה ספציפית נעשה למעלה תחת "ניהול הקבוצה", אחרי שעוברים אליה בבורר למעלה.</p>
+    <h3 style="margin:14px 0 8px">מנחים מורשים (אדמינים)</h3>
     <p class="muted">מנחה שתאשר כאן יוכל לפתוח ולנהל קבוצות משלו. אפשר להסיר את ההרשאה בכל רגע - ההסרה מבטלת מיד גם פתיחת קבוצות חדשות וגם את ניהול הקבוצות שכבר פתח. הקבוצות והמשתתפים נשארים.</p>
     <div class="list" id="admins-list"><div class="muted">טוען...</div></div>
     <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">כתובת ה-Gmail של המנחה</label>
@@ -900,8 +913,15 @@ async function fillAdminSlot(sec) {
   } else if (state.isAdmin) {
     html += `
     <hr style="border-color:var(--line);margin:22px 0">
-    <h3 style="margin:8px 0">מנחים: פתיחת קבוצה חדשה</h3>
-    <p class="muted">הקבוצה תיפתח מיד, ואז תוכל להזין שם ומוזמנים.</p>
+    <div class="muted" style="font-size:.78rem;letter-spacing:.02em">ממשק מנחה</div>
+    <h3 style="margin:2px 0 8px">פתיחת קבוצה חדשה</h3>
+    <p class="muted">אלעד אישר אותך כמנחה - אתה יכול לפתוח קבוצה משלך ולנהל אותה.</p>
+    <div class="muted" style="font-size:.85rem;margin:6px 0">איך זה עובד:<br>
+    1. כותבים שם ולוחצים יצירת קבוצה - ועוברים אליה מיד.<br>
+    2. במסך "ניהול הקבוצה" מוסיפים את כתובת ה-Gmail של כל מוזמן.<br>
+    3. שולחים למוזמנים את קישור ההצטרפות בעצמך - האפליקציה לא שולחת דבר מאליה.<br>
+    4. שם אפשר גם להעלות תמונת קבוצה, והקבוצה מקבלת צוות, היסטוריה ושבועי - בדיוק כמו בקבוצה של חמני.<br>
+    המשתתפים רואים שהצפייה פתוחה לאלעד ושיש סטטיסטיקה כללית אנונימית בין הקבוצות.</div>
     <input type="text" id="f-name" maxlength="60" placeholder="שם הקבוצה" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
     <div class="row" style="display:flex;gap:10px;margin-top:14px">
       <button class="primary" id="f-create" style="flex:1">יצירת קבוצה</button>
