@@ -4,7 +4,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
          getRedirectResult, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, query, where,
-         orderBy, limit, getDocs, serverTimestamp, onSnapshot }
+         orderBy, limit, getDocs, serverTimestamp, onSnapshot, deleteField }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { getMessaging, getToken, onMessage }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-messaging.js";
@@ -28,7 +28,7 @@ const LEGACY_NAME = "צוות חמני";
 const $ = (s) => document.querySelector(s);
 const state = { user: null, name: "", members: [], myReports: [], view: "cross",
   histMode: "today", showAvg: false, draft: null, welcomed: true,
-  group: LEGACY_GID, groups: [], groupNames: {}, profile: {}, allGroups: [] };
+  group: LEGACY_GID, groups: [], groupNames: {}, profile: {}, allGroups: [], isAdmin: false, groupPhoto: null };
 
 const DEFAULT_TIMES = ["07:50", "12:50", "19:50"];
 const QA_REM = new URLSearchParams(location.search).has("qarem");
@@ -274,7 +274,8 @@ function fmtTime(d) {
 
 function renderTeam() {
   const sec = $("#view-team");
-  sec.innerHTML = `<div class="seg"><button id="btn-avg">${state.showAvg ? "הסתר ממוצע צוותי" : "ממוצע צוותי"}</button></div>` + crossHTML();
+  sec.innerHTML = (state.groupPhoto ? `<img src="${state.groupPhoto}" alt="תמונת קבוצה" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;margin-bottom:8px">` : "")
+    + `<div class="seg"><button id="btn-avg">${state.showAvg ? "הסתר ממוצע צוותי" : "ממוצע צוותי"}</button></div>` + crossHTML();
   const wrap = sec.querySelector("#cw");
   wireQuadVocab(wrap);
   state.members.filter(m => m.lastPoint).forEach(m => {
@@ -337,6 +338,50 @@ function renderHistory() {
     const q = quadInfo(r.x, r.y);
     d.innerHTML = `<span>${fmtTime(r.at.toDate())} · ${q.title}${r.daily ? " (ממוצע יומי)" : ""}</span>
       <span class="muted">${r.word ? r.word + " · " : ""}${r.y > 0 ? "+" + r.y : r.y}/${r.x > 0 ? "+" + r.x : r.x}</span>`;
+    if (!r.daily && r.id) {
+      const btns = document.createElement("span");
+      btns.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
+      if (r.photo) {
+        const pr = document.createElement("button"); pr.className = "ghost"; pr.textContent = "מחיקת התמונה";
+        pr.addEventListener("click", async () => {
+          if (!pr.dataset.armed) { pr.dataset.armed = "1"; pr.textContent = "בטוח? לחץ שוב"; setTimeout(() => { pr.dataset.armed = ""; pr.textContent = "מחיקת התמונה"; }, 4000); return; }
+          pr.disabled = true;
+          try {
+            await updateDoc(docG(state.group, "reports", r.id), { photo: deleteField() });
+            const mref = docG(state.group, "members", state.user.uid);
+            const ms = await getDoc(mref);
+            if (ms.exists() && ms.data().additions && ms.data().additions.photo === r.photo)
+              await updateDoc(mref, { "additions.photo": deleteField() });
+            r.photo = null; renderHistory();
+          } catch (e) { pr.disabled = false; }
+        });
+        btns.appendChild(pr);
+      }
+      const del = document.createElement("button"); del.className = "ghost"; del.textContent = "מחיקת הדיווח";
+      del.addEventListener("click", async () => {
+        if (!del.dataset.armed) { del.dataset.armed = "1"; del.textContent = "בטוח? לחץ שוב"; setTimeout(() => { del.dataset.armed = ""; del.textContent = "מחיקת הדיווח"; }, 4000); return; }
+        del.disabled = true;
+        try {
+          await deleteDoc(docG(state.group, "reports", r.id));
+          const mref = docG(state.group, "members", state.user.uid);
+          const ms = await getDoc(mref);
+          if (ms.exists()) {
+            const m = ms.data(); const patch = {};
+            if (m.lastPoint && m.lastPoint.x === r.x && m.lastPoint.y === r.y) patch.lastPoint = deleteField();
+            if (m.additions) {
+              if (r.photo && m.additions.photo === r.photo) patch["additions.photo"] = deleteField();
+              if (r.word && m.additions.word === r.word) patch["additions.word"] = deleteField();
+              if (r.songUrl && m.additions.songUrl === r.songUrl) patch["additions.songUrl"] = deleteField();
+            }
+            if (Object.keys(patch).length) await updateDoc(mref, patch);
+          }
+          state.myReports = state.myReports.filter(x => x.id !== r.id);
+          renderHistory();
+        } catch (e) { del.disabled = false; }
+      });
+      btns.appendChild(del);
+      d.appendChild(btns);
+    }
     hl.appendChild(d);
   });
   sec.querySelectorAll(".seg button").forEach(b =>
@@ -436,23 +481,12 @@ async function renderSuper(sec) {
       item.className = "item";
       const st = g.stats;
       const admins = (g.adminEmails || []).length;
-      item.innerHTML = `<span><b>${g.name || g.id}</b>
-          ${g.id !== LEGACY_GID && !g.approved ? '<span class="muted"> · ממתינה לאישור</span>' : ""}<br>
+      item.innerHTML = `<span><b>${g.name || g.id}</b><br>
           <span class="muted">${st.withPoint} משתתפים פעילים · ${st.activeToday} דיווחו היום · ${st.reportsToday} דיווחים היום` +
           (st.withPoint ? ` · מרכז קבוצתי ${st.avgY > 0 ? "+" + st.avgY : st.avgY}/${st.avgX > 0 ? "+" + st.avgX : st.avgX}` : "") +
           `</span></span>`;
       const btns = document.createElement("span");
       btns.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
-      if (g.id !== LEGACY_GID && !g.approved) {
-        const ap = document.createElement("button");
-        ap.className = "primary"; ap.textContent = "אישור קבוצה";
-        ap.addEventListener("click", async () => {
-          ap.disabled = true;
-          try { await updateDoc(doc(db, "groups", g.id), { approved: true }); } catch (e) {}
-          renderSuper(sec);
-        });
-        btns.appendChild(ap);
-      }
       const view = document.createElement("button");
       view.className = "ghost"; view.textContent = "צפייה בקבוצה";
       view.addEventListener("click", async () => {
@@ -505,11 +539,15 @@ async function groupStats(gid) {
 
 function wireSuper(sec) {
   renderSuper(sec);
+  renderAdmins(sec);
   const msg = sec.querySelector("#g-msg");
-  sec.querySelector("#g-create").addEventListener("click", async () => {
+  const btn = sec.querySelector("#g-create");
+  btn.addEventListener("click", async () => {
     const name = sec.querySelector("#g-name").value.trim();
     const adminEmail = sec.querySelector("#g-admin").value.trim().toLowerCase();
+    msg.textContent = "";
     if (!name) { msg.textContent = "מלא שם לקבוצה."; return; }
+    btn.disabled = true; msg.textContent = "יוצר...";
     const adminEmails = adminEmail && adminEmail !== OWNER_EMAIL ? [adminEmail, OWNER_EMAIL] : [OWNER_EMAIL];
     try {
       const ref = await addDoc(collection(db, "groups"), {
@@ -525,23 +563,97 @@ function wireSuper(sec) {
       sec.querySelector("#g-name").value = ""; sec.querySelector("#g-admin").value = "";
       renderSuper(sec);
     } catch (e) { msg.textContent = "יצירת הקבוצה נכשלה: " + (e.code || e); }
+    btn.disabled = false;
+  });
+  const aMsg = sec.querySelector("#adm-msg"), aBtn = sec.querySelector("#adm-add");
+  aBtn.addEventListener("click", async () => {
+    const email = sec.querySelector("#adm-email").value.trim().toLowerCase();
+    aMsg.textContent = "";
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { aMsg.textContent = "מלא כתובת Gmail תקינה."; return; }
+    aBtn.disabled = true; aMsg.textContent = "מאשר...";
+    try {
+      await setDoc(doc(db, "admins", email), { addedAt: new Date().toISOString(), addedBy: OWNER_EMAIL });
+      aMsg.textContent = email + " אושר כמנחה - הוא יכול עכשיו לפתוח קבוצות משלו.";
+      sec.querySelector("#adm-email").value = "";
+      renderAdmins(sec);
+    } catch (e) { aMsg.textContent = "האישור נכשל: " + (e.code || e); }
+    aBtn.disabled = false;
   });
 }
 
-// ---------- facilitator: request a new group (pending super-admin approval) ----------
+async function renderAdmins(sec) {
+  const box = sec.querySelector("#admins-list");
+  if (!box) return;
+  try {
+    const snap = await getDocs(collection(db, "admins"));
+    box.innerHTML = snap.empty ? `<div class="muted">אין מנחים מאושרים עדיין.</div>` : "";
+    snap.docs.forEach(d => {
+      const item = document.createElement("div"); item.className = "item";
+      item.innerHTML = `<span>${d.id}</span>`;
+      const del = document.createElement("button"); del.className = "ghost"; del.textContent = "הסרת הרשאה";
+      del.addEventListener("click", async () => {
+        if (!del.dataset.armed) { del.dataset.armed = "1"; del.textContent = "בטוח? לחץ שוב"; setTimeout(() => { del.dataset.armed = ""; del.textContent = "הסרת הרשאה"; }, 4000); return; }
+        del.disabled = true;
+        try { await deleteDoc(doc(db, "admins", d.id)); } catch (e) {}
+        renderAdmins(sec);
+      });
+      item.appendChild(del); box.appendChild(item);
+    });
+  } catch (e) { box.innerHTML = `<div class="muted">טעינת המנחים נכשלה.</div>`; }
+}
+
+// ---------- approved facilitator (admin): create an own group directly ----------
 function wireFacilitator(sec) {
   const msg = sec.querySelector("#f-msg");
-  sec.querySelector("#f-create").addEventListener("click", async () => {
+  const btn = sec.querySelector("#f-create");
+  btn.addEventListener("click", async () => {
     const name = sec.querySelector("#f-name").value.trim();
+    msg.textContent = "";
     if (!name) { msg.textContent = "מלא שם לקבוצה."; return; }
+    btn.disabled = true; msg.textContent = "יוצר...";
+    const email = state.user.email.toLowerCase();
     try {
-      await addDoc(collection(db, "groups"), {
-        name, adminEmails: [state.user.email.toLowerCase()], approved: false,
-        createdAt: new Date().toISOString()
+      const ref = await addDoc(collection(db, "groups"), {
+        name, adminEmails: [email], approved: true, createdAt: new Date().toISOString()
       });
-      msg.textContent = "הבקשה נשלחה - הקבוצה תיפתח אחרי אישור אלעד.";
+      await setDoc(docG(ref.id, "roster", email),
+        { name: state.name, email, addedAt: new Date().toISOString() });
+      const groups = [...new Set([...state.groups, ref.id])];
+      try { await updateDoc(doc(db, "members", state.user.uid), { groups }); }
+      catch (e) { await setDoc(doc(db, "members", state.user.uid), { groups }, { merge: true }); }
+      state.profile.groups = groups; state.groups = groups;
+      await loadGroupNames(); renderGroupSwitcher();
+      msg.textContent = "הקבוצה נוצרה. קישור הצטרפות: " + joinLink(ref.id);
       sec.querySelector("#f-name").value = "";
-    } catch (e) { msg.textContent = "שליחת הבקשה נכשלה: " + (e.code || e); }
+    } catch (e) { msg.textContent = "יצירת הקבוצה נכשלה: " + (e.code || e); }
+    btn.disabled = false;
+  });
+}
+
+// ---------- group photo (group admin / super) ----------
+function wireGroupPhoto(sec) {
+  const cur = sec.querySelector("#gphoto-cur"), msg = sec.querySelector("#g-photo-msg");
+  const btn = sec.querySelector("#g-photo-save"), inp = sec.querySelector("#g-photo");
+  if (!btn) return;
+  const showCur = () => {
+    cur.innerHTML = state.groupPhoto
+      ? `<img src="${state.groupPhoto}" alt="תמונת קבוצה" style="width:100%;max-height:140px;object-fit:cover;border-radius:10px;margin:6px 0">`
+      : `<div class="muted">אין תמונת קבוצה עדיין.</div>`;
+  };
+  showCur();
+  btn.addEventListener("click", async () => {
+    const f = inp.files[0];
+    msg.textContent = "";
+    if (!f) { msg.textContent = "בחר תמונה קודם."; return; }
+    btn.disabled = true; msg.textContent = "שומר...";
+    try {
+      const data = await compressPhoto(f);
+      await setDoc(doc(db, "groupMeta", state.group),
+        { photo: data, updatedAt: new Date().toISOString(), updatedBy: state.user.email }, { merge: true });
+      state.groupPhoto = data; showCur();
+      msg.textContent = "תמונת הקבוצה נשמרה.";
+    } catch (e) { msg.textContent = "שמירת התמונה נכשלה: " + (e.code || e); }
+    btn.disabled = false;
   });
 }
 
@@ -617,10 +729,26 @@ async function fillAdminSlot(sec) {
       <button class="primary" id="a-add" style="flex:1">הוספה לרשימה</button>
       <button class="ghost" id="a-copy" style="flex:1">העתקת קישור הצטרפות</button>
     </div>
-    <p class="muted" id="a-msg"></p>`;
+    <p class="muted" id="a-msg"></p>
+    <hr style="border-color:var(--line);margin:22px 0">
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">תמונת קבוצה</label>
+    <div id="gphoto-cur"></div>
+    <input type="file" id="g-photo" accept="image/*" style="width:100%;margin:6px 0">
+    <button class="ghost" id="g-photo-save" style="width:100%">שמירת תמונת הקבוצה</button>
+    <p class="muted" id="g-photo-msg"></p>`;
   }
   if (isSuper()) {
     html += `
+    <hr style="border-color:var(--line);margin:22px 0">
+    <h3 style="margin:8px 0">מנחים מורשים (אדמינים)</h3>
+    <p class="muted">מנחה שתאשר כאן יוכל לפתוח ולנהל קבוצות משלו. אפשר להסיר את ההרשאה בכל רגע.</p>
+    <div class="list" id="admins-list"><div class="muted">טוען...</div></div>
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">כתובת ה-Gmail של המנחה</label>
+    <input type="text" id="adm-email" dir="ltr" placeholder="name@gmail.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <div class="row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="primary" id="adm-add" style="flex:1">אישור מנחה</button>
+    </div>
+    <p class="muted" id="adm-msg"></p>
     <hr style="border-color:var(--line);margin:22px 0">
     <h3 style="margin:8px 0">כל הקבוצות (סופר-אדמין)</h3>
     <p class="muted">סטטיסטיקה מצטברת בלבד, ללא שמות. צפייה בקבוצה מעבירה אותך אליה כמשתתף.</p>
@@ -633,14 +761,14 @@ async function fillAdminSlot(sec) {
       <button class="primary" id="g-create" style="flex:1">יצירת קבוצה</button>
     </div>
     <p class="muted" id="g-msg"></p>`;
-  } else {
+  } else if (state.isAdmin) {
     html += `
     <hr style="border-color:var(--line);margin:22px 0">
     <h3 style="margin:8px 0">מנחים: פתיחת קבוצה חדשה</h3>
-    <p class="muted">הקבוצה תיפתח אחרי אישור אלעד, ואז תוכל להזין שם ומוזמנים.</p>
+    <p class="muted">הקבוצה תיפתח מיד, ואז תוכל להזין שם ומוזמנים.</p>
     <input type="text" id="f-name" maxlength="60" placeholder="שם הקבוצה" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
     <div class="row" style="display:flex;gap:10px;margin-top:14px">
-      <button class="ghost" id="f-create" style="flex:1">שליחת בקשה לפתיחת קבוצה</button>
+      <button class="primary" id="f-create" style="flex:1">יצירת קבוצה</button>
     </div>
     <p class="muted" id="f-msg"></p>`;
   }
@@ -648,6 +776,7 @@ async function fillAdminSlot(sec) {
   if (slot.querySelector("#a-add")) wireAdmin(sec);
   if (slot.querySelector("#g-create")) wireSuper(sec);
   if (slot.querySelector("#f-create")) wireFacilitator(sec);
+  if (slot.querySelector("#g-photo-save")) wireGroupPhoto(sec);
 }
 
 async function enableReminders() {
@@ -765,6 +894,8 @@ async function enterApp() {
     await loadGroupNames();
   } catch (e) { state.welcomed = true; remAsked = true; state.groups = [state.group]; }
   renderGroupSwitcher();
+  state.isAdmin = await fetchIsAdmin().catch(() => false);
+  await loadGroupPhoto().catch(() => {});
   if (QA_REM) remAsked = !!qaRem.get().asked;
   if (!state.welcomed) return;
   if (!remAsked) showReminderPrompt();
@@ -779,6 +910,20 @@ async function loadGroupNames() {
       state.groupNames[gid] = gsnap.exists() ? (gsnap.data().name || gid) : gid;
     } catch (e) { state.groupNames[gid] = gid; }
   }
+}
+
+async function fetchIsAdmin() {
+  if (isSuper()) return true;
+  try { return (await getDoc(doc(db, "admins", state.user.email.toLowerCase()))).exists(); }
+  catch (e) { return false; }
+}
+
+async function loadGroupPhoto() {
+  state.groupPhoto = null;
+  try {
+    const s = await getDoc(doc(db, "groupMeta", state.group));
+    if (s.exists() && s.data().photo) state.groupPhoto = s.data().photo;
+  } catch (e) {}
 }
 
 function renderGroupSwitcher() {
