@@ -3,7 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebas
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
          getRedirectResult, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, addDoc, collection, query, where,
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, addDoc, collection, query, where,
          orderBy, limit, getDocs, serverTimestamp, onSnapshot }
   from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 import { getMessaging, getToken, onMessage }
@@ -34,6 +34,7 @@ const QUADS = {
   LL: { title: "כובד וניתוק",  vocab: "כובד · ניתוק · חוסר כוחות · שקיעה · ריק" },
   LR: { title: "מנוחה והחלמה",  vocab: "נינוחות · שלווה · מנוחה · הרפיה · החלמה" }
 };
+const OWNER_EMAIL = "idhadad@gmail.com";
 // ---------- auth + roster gate ----------
 async function checkRoster(user) {
   const snap = await getDoc(doc(db, "roster", user.email));
@@ -316,6 +317,66 @@ function renderHistory() {
 function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
 function isStandalone() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
 
+// ---------- owner admin: roster management ----------
+function memberStatus(email) {
+  const m = state.members.find(x => (x.email || "").toLowerCase() === email);
+  if (!m) return "ברשימה - טרם נכנס";
+  return m.welcomed ? "נכנס והשלים את ההדרכה" : "נכנס - לפני סיום ההדרכה";
+}
+
+async function renderAdminList(sec) {
+  const box = sec.querySelector("#admin-list");
+  try {
+    const snap = await getDocs(collection(db, "roster"));
+    if (!snap.size) { box.innerHTML = `<div class="muted">הרשימה ריקה.</div>`; return; }
+    box.innerHTML = "";
+    snap.docs.map(d => d.data()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "he"))
+      .forEach(r => {
+        const email = (r.email || "").toLowerCase();
+        const item = document.createElement("div");
+        item.className = "item";
+        item.innerHTML = `<span><b>${r.name || ""}</b> <span class="muted" dir="ltr">${email}</span><br>
+          <span class="muted">${memberStatus(email)}</span></span>`;
+        if (email !== OWNER_EMAIL) {
+          const del = document.createElement("button");
+          del.className = "ghost"; del.textContent = "הסרה";
+          del.addEventListener("click", async () => {
+            if (!confirm("להסיר את " + email + " מרשימת הצוות?")) return;
+            await deleteDoc(doc(db, "roster", email));
+            renderAdminList(sec);
+          });
+          item.appendChild(del);
+        }
+        box.appendChild(item);
+      });
+  } catch (e) { box.innerHTML = `<div class="muted">טעינת הרשימה נכשלה: ${e.code || e}</div>`; }
+}
+
+function wireAdmin(sec) {
+  renderAdminList(sec);
+  const msg = sec.querySelector("#a-msg");
+  sec.querySelector("#a-add").addEventListener("click", async () => {
+    const name = sec.querySelector("#a-name").value.trim();
+    const email = sec.querySelector("#a-email").value.trim().toLowerCase();
+    if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.textContent = "מלא שם וכתובת Gmail תקינה."; return; }
+    try {
+      await setDoc(doc(db, "roster", email), { name, email, addedAt: new Date().toISOString() });
+      msg.textContent = name + " נוסף/ה לרשימה. שלח/י לו/לה את קישור ההצטרפות.";
+      sec.querySelector("#a-name").value = ""; sec.querySelector("#a-email").value = "";
+      renderAdminList(sec);
+    } catch (e) { msg.textContent = "ההוספה נכשלה: " + (e.code || e); }
+  });
+  sec.querySelector("#a-copy").addEventListener("click", async () => {
+    const link = "https://idhadad-alt.github.io/arousal-cross/";
+    try { await navigator.clipboard.writeText(link); msg.textContent = "הקישור הועתק - שלח אותו רק למי שהזנת לרשימה."; }
+    catch (e) {
+      const t = document.createElement("textarea"); t.value = link; document.body.appendChild(t);
+      t.select(); document.execCommand("copy"); t.remove();
+      msg.textContent = "הקישור הועתק - שלח אותו רק למי שהזנת לרשימה.";
+    }
+  });
+}
+
 function renderSettings() {
   const sec = $("#view-settings");
   const m = state.members.find(x => x.id === state.user.uid) || {};
@@ -332,9 +393,24 @@ function renderSettings() {
     <p class="muted" id="rem-msg"></p>
     <hr style="border-color:var(--line);margin:22px 0">
     <button class="ghost" id="btn-out">יציאה</button>
+    ${state.user.email && state.user.email.toLowerCase() === OWNER_EMAIL ? `
+    <hr style="border-color:var(--line);margin:22px 0">
+    <h3 style="margin:8px 0">ניהול צוות</h3>
+    <p class="muted">מי שמופיע כאן מורשה להיכנס. שלח את קישור ההצטרפות בעצמך - האפליקציה לא שולחת דבר מאליה.</p>
+    <div class="list" id="admin-list"><div class="muted">טוען...</div></div>
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px">שם</label>
+    <input type="text" id="a-name" maxlength="40" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <label style="display:block;font-size:.82rem;color:var(--muted);margin:10px 0 4px">כתובת ה-Gmail שלו</label>
+    <input type="text" id="a-email" dir="ltr" placeholder="name@gmail.com" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)">
+    <div class="row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="primary" id="a-add" style="flex:1">הוספה לרשימה</button>
+      <button class="ghost" id="a-copy" style="flex:1">העתקת קישור הצטרפות</button>
+    </div>
+    <p class="muted" id="a-msg"></p>` : ``}
   </div>`;
   sec.querySelector("#btn-rem").addEventListener("click", () => toggleReminders(!on));
   sec.querySelector("#btn-out").addEventListener("click", () => signOut(auth));
+  if (sec.querySelector("#a-add")) wireAdmin(sec);
 }
 
 async function toggleReminders(enable) {
