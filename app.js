@@ -330,7 +330,8 @@ async function renderAdminList(sec) {
     const snap = await getDocs(collection(db, "roster"));
     if (!snap.size) { box.innerHTML = `<div class="muted">הרשימה ריקה.</div>`; return; }
     box.innerHTML = "";
-    snap.docs.map(d => d.data()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "he"))
+    snap.docs.map(d => { const r = d.data(); return { name: r.name, email: (r.email || d.id).toLowerCase() }; })
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "he"))
       .forEach(r => {
         const email = (r.email || "").toLowerCase();
         const item = document.createElement("div");
