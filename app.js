@@ -353,10 +353,10 @@ function enterApp() {
     refreshView();
   }, () => {});
   if (unsubReports) unsubReports();
-  const q = query(collection(db, "reports"), where("uid", "==", state.user.uid),
-    orderBy("at", "desc"), limit(120));
+  const q = query(collection(db, "reports"), where("uid", "==", state.user.uid), limit(120));
   unsubReports = onSnapshot(q, (snap) => {
-    state.myReports = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    state.myReports = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => ((b.at && b.at.toDate) ? b.at.toDate() : 0) - ((a.at && a.at.toDate) ? a.at.toDate() : 0));
     refreshView();
   }, () => {});
   try {
