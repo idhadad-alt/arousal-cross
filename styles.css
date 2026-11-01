@@ -54,6 +54,7 @@ button.ghost { background: none; border: 1px solid var(--line); color: var(--ink
 .quad .qlabel { position: absolute; bottom: 8px; right: 10px; font-size: .95rem; font-weight: 700;
   color: rgba(232,228,218,.85); text-shadow: 0 1px 3px rgba(0,0,0,.6); pointer-events: none; }
 .qUL .qlabel, .qUR .qlabel { bottom: auto; top: 8px; }
+.qUL .qlabel, .qLL .qlabel { right: auto; left: 10px; } /* outer edge, avoids axis pill overlap */
 /* axes + points */
 .axis { position: absolute; background: var(--line); pointer-events: none; z-index: 3; }
 .axis.v { left: 50%; top: 0; bottom: 0; width: 1px; }
