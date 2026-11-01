@@ -1,12 +1,13 @@
 name: report-reminders
 on:
   schedule:
-    - cron: '50 7,12,19 * * *'
-      timezone: 'Asia/Jerusalem'
+    # every 10 min UTC; the script decides per member using Asia/Jerusalem
+    # wall-clock (DST-safe), so no cron timezone math is needed here
+    - cron: '*/10 * * * *'
   workflow_dispatch:
     inputs:
       test_slot:
-        description: 'optional slot override, e.g. 2026-11-01@0800'
+        description: 'optional slot override, e.g. 2026-11-01@07:50 (sends to enabled members whose times include it)'
         required: false
 permissions:
   contents: write
@@ -25,11 +26,15 @@ jobs:
           SITE_URL: 'https://idhadad-alt.github.io/arousal-cross/'
           TEST_SLOT: ${{ inputs.test_slot }}
         run: node send-reminders.mjs
-      - name: keep-alive stamp
+      - name: keep-alive stamp (once daily, first run after 00:00 UTC)
+        if: ${{ github.event_name == 'schedule' }}
         run: |
-          git config user.name 'reminder-bot'
-          git config user.email 'actions@github.com'
-          date -u +%FT%TZ > .last-run
-          git add .last-run
-          git commit -m 'keep-alive: reminder run' || echo 'no changes'
-          git push
+          HOURMIN=$(date -u +%H%M)
+          if [ $((10#$HOURMIN)) -lt 11 ]; then
+            git config user.name 'reminder-bot'
+            git config user.email 'actions@github.com'
+            date -u +%FT%TZ > .last-run
+            git add .last-run
+            git commit -m 'keep-alive: reminder run' || echo 'no changes'
+            git push
+          fi
