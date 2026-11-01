@@ -372,9 +372,10 @@ function renderHistory() {
           if (ms.exists()) {
             const m = ms.data(); const patch = {};
             // identity match on the report id; legacy docs (no lastReportId/rid) fall back to coordinates
+            // identity match only; legacy docs without report ids: never guess by coordinates,
+            // leave the point unchanged rather than erase an unrelated current point
             const isLatest = m.lastReportId ? m.lastReportId === r.id
-              : (m.lastPoint && m.lastPoint.rid ? m.lastPoint.rid === r.id
-              : (m.lastPoint && m.lastPoint.x === r.x && m.lastPoint.y === r.y));
+              : (m.lastPoint && m.lastPoint.rid ? m.lastPoint.rid === r.id : false);
             if (isLatest) {
               if (m.lastPoint) patch.lastPoint = deleteField();
               if (m.additions) {
@@ -605,16 +606,28 @@ async function renderAdmins(sec) {
         if (!del.dataset.armed) { del.dataset.armed = "1"; del.textContent = "בטוח? יבוטל גם ניהול קבוצות"; setTimeout(() => { del.dataset.armed = ""; del.textContent = "הסרת הרשאה"; }, 4000); return; }
         del.disabled = true;
         const email = d.id;
+        const failed = [];
+        let roleDeleted = false;
         try {
-          await deleteDoc(doc(db, "admins", email));
+          // strip group-admin control first; the role stays until every group is clean
           const gs = await getDocs(collection(db, "groups"));
           for (const g of gs.docs) {
             const ae = g.data().adminEmails || [];
-            if (ae.includes(email))
-              await updateDoc(doc(db, "groups", g.id), { adminEmails: arrayRemove(email) }).catch(() => {});
+            if (ae.includes(email)) {
+              try { await updateDoc(doc(db, "groups", g.id), { adminEmails: arrayRemove(email) }); }
+              catch (e) { failed.push(g.data().name || g.id); }
+            }
           }
-        } catch (e) {}
-        renderAdmins(sec); renderSuper(sec);
+          if (!failed.length) {
+            await deleteDoc(doc(db, "admins", email));
+            roleDeleted = !(await getDoc(doc(db, "admins", email))).exists();
+          }
+        } catch (e) { failed.push("?"); }
+        if (roleDeleted) { renderAdmins(sec); renderSuper(sec); }
+        else {
+          del.disabled = false; del.dataset.armed = "";
+          del.textContent = failed.length ? "נכשל ב: " + failed.join(", ") + " - נסה שוב" : "ההסרה לא הושלמה - נסה שוב";
+        }
       });
       item.appendChild(del); box.appendChild(item);
     });
