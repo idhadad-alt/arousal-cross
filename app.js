@@ -158,13 +158,32 @@ function popup(html) {
   o.querySelector("#pp-close").addEventListener("click", closeOverlay);
 }
 function closeOverlay() { $("#overlay").innerHTML = ""; }
+async function clearMyPoint() {
+  await updateDoc(docG(state.group, "members", state.user.uid), { lastPoint: deleteField() });
+}
+
+function wireClearPointBtn(root, after) {
+  const btn = root.querySelector("#pp-clear-point");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "בטוח? לחץ שוב"; setTimeout(() => { btn.dataset.armed = ""; btn.textContent = "הסרת הנקודה הנוכחית מהצלב"; }, 4000); return; }
+    btn.disabled = true;
+    try { await clearMyPoint(); closeOverlay(); if (after) after(); }
+    catch (e) { btn.disabled = false; }
+  });
+}
+
 function pointPopup(m) {
   const t = new Date(m.lastPoint.at);
   let html = `<h4>${m.name}</h4><div class="muted">${fmtTime(t)}</div>`;
   if (m.additions && m.additions.word) html += `<div>מילה: ${m.additions.word}</div>`;
   if (m.additions && m.additions.songUrl) html += `<div><a href="${m.additions.songUrl}" target="_blank" rel="noopener">השיר של הרגע</a></div>`;
   if (m.additions && m.additions.photo) html += `<img src="${m.additions.photo}" alt="תמונת רגע">`;
+  if (state.user && m.id === state.user.uid) html += `<div style="margin-top:10px">
+    <button class="ghost" id="pp-clear-point">הסרת הנקודה הנוכחית מהצלב</button>
+    <div class="muted" style="font-size:.78rem;margin-top:4px">הדיווחים בהיסטוריה נשמרים.</div></div>`;
   popup(html);
+  wireClearPointBtn($("#overlay"));
 }
 // ---------- my cross (place + report) ----------
 function renderCross() {
@@ -331,6 +350,22 @@ function renderHistory() {
     svg.appendChild(pl); wrap.appendChild(svg);
   }
   pts.forEach(p => addPointEl(wrap, p.x, p.y, "hist"));
+  if (state.pointOrphanNotice) {
+    const nb = document.createElement("div");
+    nb.className = "item";
+    nb.style.cssText = "border:1px solid var(--amber,#c9a227);margin:8px 0";
+    nb.innerHTML = `<div style="font-size:.85rem">הדיווח נמחק. אי אפשר לדעת אם הוא מקור הנקודה הנוכחית שלך בצלב, לכן הנקודה נשארה. אפשר להסיר אותה בנפרד:</div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="ghost" id="orphan-clear">הסרת הנקודה הנוכחית מהצלב</button>
+        <button class="ghost" id="orphan-keep">השארת הנקודה</button></div>`;
+    sec.insertBefore(nb, sec.querySelector("#hlist"));
+    nb.querySelector("#orphan-clear").addEventListener("click", async (e) => {
+      const b = e.target; b.disabled = true;
+      try { await clearMyPoint(); state.pointOrphanNotice = false; renderHistory(); }
+      catch (err) { b.disabled = false; }
+    });
+    nb.querySelector("#orphan-keep").addEventListener("click", () => { state.pointOrphanNotice = false; renderHistory(); });
+  }
   const hl = sec.querySelector("#hlist");
   hl.innerHTML = pts.length ? "" : `<div class="muted" style="text-align:center">אין דיווחים עדיין.</div>`;
   [...pts].reverse().forEach(r => {
@@ -374,8 +409,10 @@ function renderHistory() {
             // identity match on the report id; legacy docs (no lastReportId/rid) fall back to coordinates
             // identity match only; legacy docs without report ids: never guess by coordinates,
             // leave the point unchanged rather than erase an unrelated current point
+            const hasIdentity = !!(m.lastReportId || (m.lastPoint && m.lastPoint.rid));
             const isLatest = m.lastReportId ? m.lastReportId === r.id
               : (m.lastPoint && m.lastPoint.rid ? m.lastPoint.rid === r.id : false);
+            if (!hasIdentity && m.lastPoint) state.pointOrphanNotice = true;
             if (isLatest) {
               if (m.lastPoint) patch.lastPoint = deleteField();
               if (m.additions) {
