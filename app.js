@@ -446,9 +446,9 @@ function renderSettings() {
   sec.querySelector("#btn-rem").addEventListener("click", async () => {
     const msg = $("#rem-msg"); msg.textContent = "";
     if (on) { await saveReminders({ enabled: false, tokens: [] }); renderSettings(); return; }
-    const ok = await enableReminders();
-    if (ok) { renderSettings(); $("#rem-msg").textContent = "התזכורות הופעלו."; }
-    else msg.textContent = "ההתראות לא אושרו במכשיר.";
+    const res = await enableReminders();
+    if (res.ok) { renderSettings(); $("#rem-msg").textContent = "התזכורות הופעלו."; }
+    else msg.textContent = reminderFailText(res);
   });
   sec.querySelector("#btn-times").addEventListener("click", async () => {
     const msg = $("#rem-msg");
@@ -462,19 +462,41 @@ function renderSettings() {
 }
 
 async function enableReminders() {
+  const unsupported = !window.isSecureContext || !("Notification" in window) ||
+    !("serviceWorker" in navigator) || !("PushManager" in window);
+  if (unsupported) return { ok: false, stage: "unsupported" };
+  let perm;
+  try { perm = await Notification.requestPermission(); }
+  catch (e) { return { ok: false, stage: "perm-error", detail: String(e && e.message || e) }; }
+  if (perm === "denied") return { ok: false, stage: "denied" };
+  if (perm !== "granted") return { ok: false, stage: "dismissed" };
   try {
-    const perm = await Notification.requestPermission();
-    if (perm !== "granted") return false;
     if (!messaging) messaging = getMessaging(app);
     const reg = await navigator.serviceWorker.register("firebase-messaging-sw.js");
     const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
-    if (!token) return false;
+    if (!token) return { ok: false, stage: "token-empty" };
     const cur = myReminders();
     const patch = { enabled: true, tokens: [token], updatedAt: new Date().toISOString() };
     if (!cur.times || !cur.times.length) patch.times = DEFAULT_TIMES;
     await saveReminders(patch);
-    return true;
-  } catch (e) { return false; }
+    return { ok: true };
+  } catch (e) { return { ok: false, stage: "token-error", detail: String(e && e.code || e && e.message || e) }; }
+}
+
+function reminderFailText(r) {
+  switch (r.stage) {
+    case "unsupported":
+      return "הדפדפן הזה לא תומך בהתראות. באנדרויד: כרום עדכני. באייפון: קודם מוסיפים את האתר למסך הבית ונכנסים מהאייקון.";
+    case "denied":
+      return "ההתראות חסומות לאתר בדפדפן. לאישור: לוחצים על סמל המנעול ליד שורת הכתובת ← הרשאות ← התראות ← אפשר, ואז מנסים שוב.";
+    case "dismissed":
+      return "חלון האישור של הדפדפן נסגר בלי לבחור אישור. מנסים שוב ולוחצים על אישור בחלון שקופץ.";
+    case "perm-error":
+    case "token-error":
+    case "token-empty":
+    default:
+      return "שגיאה טכנית (" + r.stage + (r.detail ? ": " + r.detail : "") + "). נסו שוב, ואם חוזר - צלמו ושלחו לאלעד.";
+  }
 }
 
 function showReminderPrompt() {
@@ -497,10 +519,11 @@ function showReminderPrompt() {
   });
   yes.addEventListener("click", async () => {
     yes.disabled = true;
+    // permission request must stay inside the user gesture - record the answer after
+    const res = await enableReminders();
     try { await saveReminders({ asked: true }); } catch (e) {}
-    const ok = await enableReminders();
-    if (ok) { closeOverlay(); return; }
-    msg.textContent = "ההתראות לא אושרו במכשיר. אפשר להפעיל בכל עת מהגדרות.";
+    if (res.ok) { closeOverlay(); return; }
+    msg.textContent = reminderFailText(res);
     yes.classList.add("hidden");
     no.textContent = "סגור";
   });
