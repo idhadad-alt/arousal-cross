@@ -102,3 +102,12 @@ svg.trail { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
   border-radius: 999px; padding: 6px 16px; font-size: .85rem; cursor: pointer; }
 .seg button.on { color: var(--accent); border-color: var(--accent); font-weight: 700; }
 .hidden { display: none !important; }
+/* --- instructions / welcome --- */
+.help { max-width: 560px; margin: 0 auto; line-height: 1.65; }
+.help h2 { font-size: 1.25rem; }
+.help h3 { margin: 14px 0 4px; font-size: 1rem; color: var(--accent); }
+.help p { margin: 4px 0; font-size: .92rem; }
+.help ol { padding-right: 20px; margin: 6px 0; }
+.help li { margin: 8px 0; font-size: .92rem; }
+.help .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 16px; margin: 12px 0; }
