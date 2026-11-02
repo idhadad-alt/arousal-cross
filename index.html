@@ -2,6 +2,12 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
+<script>
+// Keep previously shared invitations usable; do not initialize auth on this origin.
+if (location.hostname === "idhadad-alt.github.io") {
+  location.replace("https://arousal-cross-hamani.firebaseapp.com/" + location.search + location.hash);
+}
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>צלב העוררות - צוות חמני</title>
 <link rel="manifest" href="manifest.webmanifest">
