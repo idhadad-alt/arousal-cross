@@ -147,19 +147,39 @@ function enterFacilitatorHome() {
 }
 function inAppBrowser() {
   const ua = navigator.userAgent || "";
-  return /whatsapp|fban|fbav|instagram|tiktok|line\//i.test(ua);
+  // "wv" is the generic Android WebView marker; Google sign-in is blocked in all of them
+  return /whatsapp|;\s?wv\)|fban|fbav|instagram|tiktok|line\//i.test(ua);
+}
+function isAndroidWebView() { return /android/i.test(navigator.userAgent || "") && inAppBrowser(); }
+// hands the same URL (incl. ?g= group invite) to the device's real browser
+function browserHandoffUrl() {
+  const u = new URL(location.href);
+  return "intent://" + u.host + u.pathname + u.search +
+    "#Intent;scheme=https;action=android.intent.action.VIEW;end";
 }
 function showGate(signedIn=false) {
   $("#gate").classList.remove("hidden");
   let hint = document.getElementById("webview-hint");
   if (!hint) {
-    hint = document.createElement("p");
-    hint.id = "webview-hint"; hint.className = "muted"; hint.style.fontSize = ".85rem";
-    hint.textContent = "אם הכניסה עם גוגל נתקעת: הדף נפתח בתוך אפליקציית צ'אט. פתחו את הקישור בדפדפן רגיל (Chrome/Safari) דרך תפריט הנקודות למעלה, ונסו שוב.";
+    hint = document.createElement("div");
+    hint.id = "webview-hint";
     const gate = $("#gate");
     gate.insertBefore(hint, document.getElementById("gate-msg"));
   }
-  hint.classList.toggle("hidden", !inAppBrowser());
+  if (!inAppBrowser()) { hint.classList.add("hidden"); }
+  else if (isAndroidWebView()) {
+    hint.innerHTML = `<p class="muted" style="font-size:.85rem">הכניסה עם גוגל לא עובדת בתוך חלון הצ'אט. לוחצים פעם אחת כאן - אותו דף נפתח בדפדפן הרגיל, ושם נכנסים.</p>
+      <a style="display:block;text-align:center;text-decoration:none;padding:12px 22px;border-radius:10px;margin:8px 0;background:var(--accent);color:#fffdf4;font-weight:700" href="${browserHandoffUrl()}">פתיחה בדפדפן והמשך כניסה</a>`;
+    hint.classList.remove("hidden");
+    // one automatic handoff attempt per tab; if it fails, the button above stays
+    if (!sessionStorage.getItem("handoffTried")) {
+      sessionStorage.setItem("handoffTried", "1");
+      setTimeout(() => { location.href = browserHandoffUrl(); }, 400);
+    }
+  } else {
+    hint.innerHTML = `<p class="muted" style="font-size:.85rem">אם הכניסה עם גוגל נתקעת: הדף נפתח בתוך אפליקציית צ'אט. פתחו את הקישור בדפדפן הרגיל דרך תפריט הנקודות למעלה, ונסו שוב.</p>`;
+    hint.classList.remove("hidden");
+  }
   $("#tabs").classList.add("hidden");
   ["cross","team","history","settings","help","week"].forEach(v => $("#view-"+v).classList.add("hidden"));
   $("#btn-login").textContent = signedIn ? "כניסה עם חשבון אחר" : "כניסה עם חשבון Google";
