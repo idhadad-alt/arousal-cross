@@ -71,11 +71,28 @@ async function checkRoster(user, gid) {
 
 $("#btn-login").addEventListener("click", async () => {
   const msg = $("#gate-msg"); msg.classList.add("hidden");
+  // popup first: redirect sign-in silently fails where cross-site storage is blocked
+  // (iOS/Safari ITP, hardened browsers). redirect stays as the fallback.
   try {
-    await signInWithRedirect(auth, new GoogleAuthProvider());
-  } catch (e) { msg.textContent = "שגיאת כניסה: " + e.code; msg.classList.remove("hidden"); }
+    await signInWithPopup(auth, new GoogleAuthProvider());
+    return;
+  } catch (e) {
+    if (e && (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request")) return;
+    if (e && ["auth/popup-blocked", "auth/operation-not-supported-in-this-environment",
+              "auth/web-storage-unsupported", "auth/internal-error"].includes(e.code)) {
+      try { await signInWithRedirect(auth, new GoogleAuthProvider()); }
+      catch (e2) { msg.textContent = "שגיאת כניסה: " + (e2.code || e2); msg.classList.remove("hidden"); }
+      return;
+    }
+    msg.textContent = "שגיאת כניסה: " + (e && e.code || e); msg.classList.remove("hidden");
+  }
 });
-getRedirectResult(auth).catch(() => {});
+getRedirectResult(auth).catch((e) => {
+  if (!e || !e.code) return;
+  const msg = $("#gate-msg");
+  msg.textContent = "שגיאת כניסה: " + e.code;
+  msg.classList.remove("hidden");
+});
 
 onAuthStateChanged(auth, async (user) => {
   if (!user) { showGate(); return; }
@@ -128,8 +145,21 @@ function enterFacilitatorHome() {
     b.classList.toggle("hidden", b.dataset.v !== "settings"));
   showView("settings");
 }
+function inAppBrowser() {
+  const ua = navigator.userAgent || "";
+  return /whatsapp|fban|fbav|instagram|tiktok|line\//i.test(ua);
+}
 function showGate(signedIn=false) {
   $("#gate").classList.remove("hidden");
+  let hint = document.getElementById("webview-hint");
+  if (!hint) {
+    hint = document.createElement("p");
+    hint.id = "webview-hint"; hint.className = "muted"; hint.style.fontSize = ".85rem";
+    hint.textContent = "אם הכניסה עם גוגל נתקעת: הדף נפתח בתוך אפליקציית צ'אט. פתחו את הקישור בדפדפן רגיל (Chrome/Safari) דרך תפריט הנקודות למעלה, ונסו שוב.";
+    const gate = $("#gate");
+    gate.insertBefore(hint, document.getElementById("gate-msg"));
+  }
+  hint.classList.toggle("hidden", !inAppBrowser());
   $("#tabs").classList.add("hidden");
   ["cross","team","history","settings","help","week"].forEach(v => $("#view-"+v).classList.add("hidden"));
   $("#btn-login").textContent = signedIn ? "כניסה עם חשבון אחר" : "כניסה עם חשבון Google";
